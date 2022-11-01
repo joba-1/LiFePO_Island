@@ -89,6 +89,7 @@ since WiFi is needed for Influx anyways, it is used for other stuff as well:
 * Syslog (and later mqtt publish) of status on changes
 * planned: NTP to set eSmart3 time if out of sync (maybe later: read eSmart3 time needed) or at startup once
 
+![LiFePO_Island](https://user-images.githubusercontent.com/32450554/199284797-8ae049ff-4aa1-495b-8e3d-3111fb9d40d6.png)
 
 Comments welcome
 
