@@ -6,6 +6,8 @@ and [Joba_ESmart3](https://github.com/joba-1/Joba_ESmart3) libraries.
 Switching eSmart3 load and JbdBms mosfets on and off is also possible.
 For now, battery parameters for LiFePO are always set at startup.
 
+![lifepo-island-test-rig-IMG-2929](https://user-images.githubusercontent.com/32450554/199218951-2d38cff8-8812-4187-9072-7caadacad0b7.jpg)
+
 Running the monitor on an ESP8266 might work but is not tested.
 
 # Installation
