@@ -655,6 +655,7 @@ void handle_jbdHardware() {
     if( now - prev >= interval ) {
         prev += interval;
         JbdBms::Hardware_t data = {0};
+        delay(50);  // separate from esmart calls
         if (jbdbms.getHardware(data)) {
             if (strncmp((const char *)data.id, (const char *)jbdHardware.id, sizeof(data.id))) {
                 // found a new/different JBD BMS
@@ -674,6 +675,7 @@ void handle_jbdHardware() {
         else {
             Serial.println("getHardware error");
         }
+        delay(50);  // separate from esmart calls
     }
 }
 
@@ -727,6 +729,7 @@ void handle_jbdStatus() {
     if( now - prev >= interval ) {
         prev += interval;
         JbdBms::Status_t data = {0};
+        delay(50);  // separate from esmart calls
         if (jbdbms.getStatus(data)) {
             if (memcmp(&data, &jbdStatus, sizeof(data))) {
                 // some voltage has changed
@@ -770,6 +773,7 @@ void handle_jbdStatus() {
         else {
             Serial.println("getStatus error");
         }
+        delay(50);  // separate from esmart calls
     }
 }
 
@@ -804,6 +808,7 @@ void handle_jbdCells() {
     if( now - prev >= interval ) {
         prev += interval;
         JbdBms::Cells_t data = {0};
+        delay(50);  // separate from esmart calls
         if (jbdbms.getCells(data)) {
             if (memcmp(&data, &jbdCells, sizeof(data))) {
                 // some voltage has changed
@@ -827,6 +832,7 @@ void handle_jbdCells() {
         else {
             Serial.println("getCells error");
         }
+        delay(50);  // separate from esmart calls
     }
 }
 
@@ -955,6 +961,7 @@ void setup_webserver() {
             mosfetStatus |= JbdBms::MOSFET_DISCHARGE;
         }
         if (mosfetStatus != jbdStatus.mosfetStatus) {
+            delay(50);  // separate from esmart calls
             if (jbdbms.setMosfetStatus((JbdBms::mosfet_t)mosfetStatus)) {
                 jbdStatus.mosfetStatus = mosfetStatus;
                 switch (mosfetStatus) {
@@ -975,6 +982,7 @@ void setup_webserver() {
             else {
                 msg = "Set mosfet status failed";
             }
+            delay(50);  // separate from esmart calls
         }
 
         web_server.send(200, "text/html", main_page(msg)); 
