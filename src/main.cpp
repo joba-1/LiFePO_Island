@@ -66,6 +66,9 @@ Use pin 22 to toggle RS485 read/write
     
     // Time sync
     #include <time.h>
+
+    // Reset reason
+    #include "rom/rtc.h"
 #else
     #error "No ESP8266 or ESP32, define your rs485 stream, pins and includes here!"
 #endif
@@ -1260,6 +1263,36 @@ void setup_LiFePO() {
 }
 
 
+void slog(const char *msg) {
+    Serial.println(msg);
+    syslog.log(LOG_NOTICE, msg);
+}
+
+
+// Reset reason can be quite useful...
+// Messages from arduino core example
+void print_reset_reason(int core) {
+  switch (rtc_get_reset_reason(core)) {
+    case 1  : slog("Vbat power on reset");break;
+    case 3  : slog("Software reset digital core");break;
+    case 4  : slog("Legacy watch dog reset digital core");break;
+    case 5  : slog("Deep Sleep reset digital core");break;
+    case 6  : slog("Reset by SLC module, reset digital core");break;
+    case 7  : slog("Timer Group0 Watch dog reset digital core");break;
+    case 8  : slog("Timer Group1 Watch dog reset digital core");break;
+    case 9  : slog("RTC Watch dog Reset digital core");break;
+    case 10 : slog("Instrusion tested to reset CPU");break;
+    case 11 : slog("Time Group reset CPU");break;
+    case 12 : slog("Software reset CPU");break;
+    case 13 : slog("RTC Watch dog Reset CPU");break;
+    case 14 : slog("for APP CPU, reseted by PRO CPU");break;
+    case 15 : slog("Reset when the vdd voltage is not stable");break;
+    case 16 : slog("RTC Watch dog reset digital core and rtc module");break;
+    default : slog("Reset reason unknown");
+  }
+}
+
+
 // Startup
 void setup() {
     WiFi.mode(WIFI_STA);
@@ -1318,6 +1351,9 @@ void setup() {
     rs485.begin(9600, SWSERIAL_8N1, 13, 15);  // Use pins 13 and 15 for RX and TX
     analogWriteRange(PWMRANGE);  // for health led breathing steps
 #elif defined(ESP32)
+    print_reset_reason(0);
+    print_reset_reason(1);  // assume 2nd core (should I ask?)
+
     rs485.begin(9600, SERIAL_8N1);  // Use Serial2 default pins 16 and 17 for RX and TX
     ledcAttachPin(HEALTH_LED_PIN, HEALTH_PWM_CH);
     ledcSetup(HEALTH_PWM_CH, 1000, PWMBITS);
