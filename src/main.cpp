@@ -16,6 +16,9 @@ Use pin 22 to toggle RS485 read/write
 #if defined(ESP8266)
     #include <SoftwareSerial.h>
     SoftwareSerial rs485;  // Use SoftwareSerial port
+    #define RS485_DIR_PIN -1  // != -1: Use pin for explicit DE/!RE
+    #define RS485_RX_PIN -1
+    #define RS485_TX_PIN -1
 
     #define HEALTH_LED_ON LOW
     #define HEALTH_LED_OFF HIGH
@@ -44,14 +47,22 @@ Use pin 22 to toggle RS485 read/write
     NTPClient ntp(ntpUDP, NTP_SERVER);
 #elif defined(ESP32)
     HardwareSerial &rs485 = Serial2;
+    #define RS485_DIR_PIN -1  // != -1: Use pin for explicit DE/!RE
+    #define RS485_RX_PIN  12  // != -1: Use non-default pin for Rx
+    #define RS485_TX_PIN  13  // != -1: Use non-default pin for Tx
 
     #define HEALTH_LED_ON HIGH
     #define HEALTH_LED_OFF LOW
-    #define HEALTH_LED_PIN LED_BUILTIN
+    #ifdef LED_BUILTIN
+        #define HEALTH_LED_PIN LED_BUILTIN
+    #else
+        // esp32-cam board has an inverted led, but no LED_BUILTIN
+        #define HEALTH_LED_PIN 15
+    #endif
     #define HEALTH_PWM_CH 0
-    #define LOAD_LED_ON HIGH
-    #define LOAD_LED_OFF LOW
-    #define LOAD_LED_PIN 5
+    #define LOAD_LED_ON LOW
+    #define LOAD_LED_OFF HIGH
+    #define LOAD_LED_PIN 33
     #define LOAD_BUTTON_PIN 0
 
     // Web Updater
@@ -110,15 +121,14 @@ char start_time[30];
 // eSmart3 device
 #include <esmart3.h>
 
-#define RS485_DIR_PIN 22  // != -1: Use pin for explicit DE/!RE
-
-ESmart3 esmart3(rs485);  // Serial port to communicate with RS485 adapter
+uint32_t rs485_access_ms = 0;              // rs485 access timestamp for esmart3 and jbdbms
+ESmart3 esmart3(rs485, &rs485_access_ms);  // Serial port to communicate with RS485 adapter
 
 
 // JbdBms device
 #include <jbdbms.h>
 
-JbdBms jbdbms(rs485);  // Same serial port as esmart3 is ok, if parameters are the same
+JbdBms jbdbms(rs485, &rs485_access_ms);  // Same serial port as esmart3 is ok, if parameters are the same
 
 
 // Post data to InfluxDB
@@ -135,14 +145,12 @@ bool postInflux(const char *line) {
     http.end();
 
     if (influx_status < 200 || influx_status >= 300) {
-        breathe_interval = err_interval;
         syslog.logf(LOG_ERR, "Post %s:%d%s status=%d line='%s' response='%s'",
             INFLUX_SERVER, INFLUX_PORT, uri, influx_status, line, payload.c_str());
         return false;
     }
 
-    breathe_interval = ok_interval; // TODO mix with other possible errors
-    post_time = time(NULL);         // TODO post_time?
+    post_time = time(NULL);
     return true;
 }
 
@@ -658,7 +666,6 @@ void handle_jbdHardware() {
     if( now - prev >= interval ) {
         prev += interval;
         JbdBms::Hardware_t data = {0};
-        delay(50);  // separate from esmart calls
         if (jbdbms.getHardware(data)) {
             if (strncmp((const char *)data.id, (const char *)jbdHardware.id, sizeof(data.id))) {
                 // found a new/different JBD BMS
@@ -678,7 +685,6 @@ void handle_jbdHardware() {
         else {
             Serial.println("getHardware error");
         }
-        delay(50);  // separate from esmart calls
     }
 }
 
@@ -732,7 +738,6 @@ void handle_jbdStatus() {
     if( now - prev >= interval ) {
         prev += interval;
         JbdBms::Status_t data = {0};
-        delay(50);  // separate from esmart calls
         if (jbdbms.getStatus(data)) {
             if (memcmp(&data, &jbdStatus, sizeof(data))) {
                 // some voltage has changed
@@ -776,7 +781,6 @@ void handle_jbdStatus() {
         else {
             Serial.println("getStatus error");
         }
-        delay(50);  // separate from esmart calls
     }
 }
 
@@ -811,7 +815,6 @@ void handle_jbdCells() {
     if( now - prev >= interval ) {
         prev += interval;
         JbdBms::Cells_t data = {0};
-        delay(50);  // separate from esmart calls
         if (jbdbms.getCells(data)) {
             if (memcmp(&data, &jbdCells, sizeof(data))) {
                 // some voltage has changed
@@ -835,7 +838,6 @@ void handle_jbdCells() {
         else {
             Serial.println("getCells error");
         }
-        delay(50);  // separate from esmart calls
     }
 }
 
@@ -964,7 +966,6 @@ void setup_webserver() {
             mosfetStatus |= JbdBms::MOSFET_DISCHARGE;
         }
         if (mosfetStatus != jbdStatus.mosfetStatus) {
-            delay(50);  // separate from esmart calls
             if (jbdbms.setMosfetStatus((JbdBms::mosfet_t)mosfetStatus)) {
                 jbdStatus.mosfetStatus = mosfetStatus;
                 switch (mosfetStatus) {
@@ -985,7 +986,6 @@ void setup_webserver() {
             else {
                 msg = "Set mosfet status failed";
             }
-            delay(50);  // separate from esmart calls
         }
 
         web_server.send(200, "text/html", main_page(msg)); 
@@ -1184,7 +1184,7 @@ bool check_ntptime() {
 // Status led update
 void handle_breathe() {
     static uint32_t start = 0;  // start of last breath
-    static uint32_t min_duty = PWMRANGE / 20;  // limit min brightness
+    static uint32_t min_duty = 1;  // limit min brightness
     static uint32_t max_duty = PWMRANGE / 2;  // limit max brightness
     static uint32_t prev_duty = 0;
 
@@ -1208,10 +1208,14 @@ void handle_breathe() {
     if (duty != prev_duty) {
         // adjust pwm duty cycle
         prev_duty = duty;
+        if (HEALTH_LED_ON == LOW) {
+            // inverted
+            duty = PWMRANGE - duty;
+        }
         #if defined(ESP32)
             ledcWrite(HEALTH_PWM_CH, duty);
         #else
-            analogWrite(HEALTH_LED_PIN, PWMRANGE - duty);
+            analogWrite(HEALTH_LED_PIN, duty);
         #endif
     }
 }
@@ -1240,6 +1244,7 @@ void setup_LiFePO() {
         batParam.wMaxChgCurr = maxDeviceCurr;  // eSmart3 40A limit
     }
     batParam.wMaxDisChgCurr = batParam.wMaxChgCurr;  // same as charge for LiFePO and eSmart3
+
     if( esmart3.setBatParam(batParam) ) {
         Serial.println("setBatParam done");
     }
@@ -1354,7 +1359,7 @@ void setup() {
     print_reset_reason(0);
     print_reset_reason(1);  // assume 2nd core (should I ask?)
 
-    rs485.begin(9600, SERIAL_8N1);  // Use Serial2 default pins 16 and 17 for RX and TX
+    rs485.begin(9600, SERIAL_8N1, RS485_RX_PIN, RS485_TX_PIN, false, 1000);
     ledcAttachPin(HEALTH_LED_PIN, HEALTH_PWM_CH);
     ledcSetup(HEALTH_PWM_CH, 1000, PWMBITS);
 #else
@@ -1377,14 +1382,11 @@ void setup() {
 
 // Main loop
 void loop() {
-    // TODO set/reset err_interval for breathing
     handle_es3Information();
     handle_jbdHardware();
+    
     bool have_time = check_ntptime();
-    if( es3Information.wSerial[0] && jbdHardware.id[0] ) {  // we have required esmart3 infos
-        if (have_time && enabledBreathing) {
-            handle_breathe();
-        }
+    if( es3Information.wSerial[0] ) {  // we have required esmart3 infos
         handle_es3ChgSts();
         handle_es3BatParam();
         handle_es3Log();
@@ -1392,10 +1394,21 @@ void loop() {
         handle_es3ProParam();
         handle_es3LoadParam();
         // ignoring TempParam and EngSave (for now?)
-
+    }
+    
+    if( jbdHardware.id[0] ) {  // we have required bms infos
         handle_jbdStatus();
         handle_jbdCells();
     }
+
+    if (es3Information.wSerial[0] 
+     && jbdHardware.id[0]
+     && have_time 
+     && enabledBreathing) {
+        breathe_interval = (influx_status < 200 || influx_status >= 300 || es3ChgSts.wFault || jbdStatus.fault) ? err_interval : ok_interval;
+        handle_breathe();  // health indicator
+    }
+
     handle_load_button(handle_load_led());
     web_server.handleClient();
 }
