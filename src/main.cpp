@@ -133,13 +133,14 @@ JbdBms jbdbms(rs485, &rs485_access_ms);  // Same serial port as esmart3 is ok, i
 void slog(const char *msg, uint16_t pri = LOG_INFO) {
     static bool log_infos = true;
     
-    if (millis() > 10 * 60 * 1000) {
-        log_infos = false;  // log infos only for first 10 minutes
-    }
-
     if (pri < LOG_INFO || log_infos) {
         Serial.println(msg);
         syslog.log(pri, msg);
+    }
+
+    if (log_infos && millis() > 10 * 60 * 1000) {
+        log_infos = false;  // log infos only for first 10 minutes
+        slog("Switch off info level messages", LOG_NOTICE);
     }
 }
 
@@ -221,6 +222,26 @@ void handle_es3Information() {
 }
 
 
+static const char *bits( uint16_t faults, uint8_t num_bits ) {
+    static char str[17];
+
+    if (num_bits >= sizeof(str)) {
+        *str = '\0';
+    }
+    else {
+        char *ptr = &str[num_bits];
+        *ptr = '\0';
+        uint16_t mask = 1;
+        while (num_bits--) {
+            *(--ptr) = (faults & mask) ? '1' : '0';
+            mask <<= 1;
+        }
+    }
+
+    return str;
+}
+
+
 bool json_ChgSts(char *json, size_t maxlen, ESmart3::ChgSts_t data) {
     static const char jsonFmt[] =
         "{\"Version\":" VERSION ",\"Serial\":\"%8.8s\",\"ChgSts\":{"
@@ -237,16 +258,13 @@ bool json_ChgSts(char *json, size_t maxlen, ESmart3::ChgSts_t data) {
         "\"InnerTemp\":%d,"
         "\"BatCap\":%u,"
         "\"CO2\":%u,"
-        "\"Fault\":\"%d%d%d%d%d%d%d%d%d%d\","
+        "\"Fault\":\"%s\","
         "\"SystemReminder\":%u}}";
 
     int len = snprintf(json, maxlen, jsonFmt, (char *)es3Information.wSerial,
         data.wChgMode, data.wPvVolt, data.wBatVolt, data.wChgCurr, data.wOutVolt,
         data.wLoadVolt, data.wLoadCurr, data.wChgPower, data.wLoadPower, data.wBatTemp, 
-        data.wInnerTemp, data.wBatCap, data.dwCO2, ESmart3::isBatteryVoltageOver(data.wFault), ESmart3::isPvVoltageOver(data.wFault),
-        ESmart3::isChargeCurrentOver(data.wFault), ESmart3::isDischargeCurrentOver(data.wFault), ESmart3::isBatteryTemperatureAlarm(data.wFault),
-        ESmart3::isInternalTemperatureAlarm(data.wFault), ESmart3::isPvVoltageLow(data.wFault), ESmart3::isBatteryVoltageLow(data.wFault),
-        ESmart3::isTripZeroProtectionTrigger(data.wFault), ESmart3::isControlByManualSwitchgear(data.wFault), data.wSystemReminder);
+        data.wInnerTemp, data.wBatCap, data.dwCO2, bits(data.wFault, 10), data.wSystemReminder);
 
     return len < maxlen;
 }
@@ -282,7 +300,7 @@ void handle_es3ChgSts() {
                     "InnerTemp=%d,"
                     "BatCap=%u,"
                     "CO2=%u,"
-                    "Fault=\"%d%d%d%d%d%d%d%d%d%d\","
+                    "Fault=\"%s\","
                     "SystemReminder=%u";
                 
                 es3ChgSts = data;
@@ -292,10 +310,7 @@ void handle_es3ChgSts() {
                 snprintf(msg, sizeof(msg), lineFmt, (char *)es3Information.wSerial, WiFi.getHostname(), 
                     data.wChgMode, data.wPvVolt, data.wBatVolt, data.wChgCurr, data.wOutVolt,
                     data.wLoadVolt, data.wLoadCurr, data.wChgPower, data.wLoadPower, data.wBatTemp, 
-                    data.wInnerTemp, data.wBatCap, data.dwCO2, ESmart3::isBatteryVoltageOver(data.wFault), ESmart3::isPvVoltageOver(data.wFault),
-                    ESmart3::isChargeCurrentOver(data.wFault), ESmart3::isDischargeCurrentOver(data.wFault), ESmart3::isBatteryTemperatureAlarm(data.wFault),
-                    ESmart3::isInternalTemperatureAlarm(data.wFault), ESmart3::isPvVoltageLow(data.wFault), ESmart3::isBatteryVoltageLow(data.wFault),
-                    ESmart3::isTripZeroProtectionTrigger(data.wFault), ESmart3::isControlByManualSwitchgear(data.wFault), data.wSystemReminder);
+                    data.wInnerTemp, data.wBatCap, data.dwCO2, bits(data.wFault, 10), data.wSystemReminder);
                 postInflux(msg);
             }
         }
