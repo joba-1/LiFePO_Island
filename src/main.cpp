@@ -56,8 +56,7 @@ Use pin 22 to toggle RS485 read/write
     #ifdef LED_BUILTIN
         #define HEALTH_LED_PIN LED_BUILTIN
     #else
-        // esp32-cam board has an inverted led, but no LED_BUILTIN
-        #define HEALTH_LED_PIN 15
+        #define HEALTH_LED_PIN 16
     #endif
     #define HEALTH_PWM_CH 0
     #define LOAD_LED_ON LOW
@@ -131,6 +130,20 @@ ESmart3 esmart3(rs485, &rs485_access_ms);  // Serial port to communicate with RS
 JbdBms jbdbms(rs485, &rs485_access_ms);  // Same serial port as esmart3 is ok, if parameters are the same
 
 
+void slog(const char *msg, uint16_t pri = LOG_INFO) {
+    static bool log_infos = true;
+    
+    if (millis() > 10 * 60 * 1000) {
+        log_infos = false;  // log infos only for first 10 minutes
+    }
+
+    if (pri < LOG_INFO || log_infos) {
+        Serial.println(msg);
+        syslog.log(pri, msg);
+    }
+}
+
+
 // Post data to InfluxDB
 bool postInflux(const char *line) {
     static const char uri[] = "/write?db=" INFLUX_DB "&precision=s";
@@ -145,8 +158,9 @@ bool postInflux(const char *line) {
     http.end();
 
     if (influx_status < 200 || influx_status >= 300) {
-        syslog.logf(LOG_ERR, "Post %s:%d%s status=%d line='%s' response='%s'",
+        snprintf(msg, sizeof(msg), "Post %s:%d%s status=%d line='%s' response='%s'",
             INFLUX_SERVER, INFLUX_PORT, uri, influx_status, line, payload.c_str());
+        slog(msg, LOG_ERR);
         return false;
     }
 
@@ -192,8 +206,7 @@ void handle_es3Information() {
 
                 es3Information = data;
                 json_Information(msg, sizeof(msg), data);
-                Serial.println(msg);
-                syslog.log(LOG_INFO, msg);
+                slog(msg);
                 // TODO mqtt.publish(topic, msg);
                 snprintf(msg, sizeof(msg), lineFmt, (char *)data.wSerial,
                     WiFi.getHostname(), (char *)data.wModel,
@@ -202,7 +215,7 @@ void handle_es3Information() {
             }
         }
         else {
-            Serial.println("getInformation error");
+            slog("getInformation error", LOG_ERR);
         }
     }
 }
@@ -274,8 +287,7 @@ void handle_es3ChgSts() {
                 
                 es3ChgSts = data;
                 json_ChgSts(msg, sizeof(msg), data);
-                Serial.println(msg);
-                syslog.log(LOG_INFO, msg);
+                slog(msg);
                 // TODO mqtt.publish(topic, msg);
                 snprintf(msg, sizeof(msg), lineFmt, (char *)es3Information.wSerial, WiFi.getHostname(), 
                     data.wChgMode, data.wPvVolt, data.wBatVolt, data.wChgCurr, data.wOutVolt,
@@ -288,7 +300,7 @@ void handle_es3ChgSts() {
             }
         }
         else {
-            Serial.println("getChgSts error");
+            slog("getChgSts error", LOG_ERR);
         }
     }
 }
@@ -344,8 +356,7 @@ void handle_es3BatParam() {
                 
                 es3BatParam = data;
                 json_BatParam(msg, sizeof(msg), data);
-                Serial.println(msg);
-                syslog.log(LOG_INFO, msg);
+                slog(msg);
                 // TODO mqtt.publish(topic, msg);
                 snprintf(msg, sizeof(msg), lineFmt, (char *)es3Information.wSerial, WiFi.getHostname(), 
                     data.wBatType, data.wBatSysType, data.wBulkVolt, data.wFloatVolt, data.wMaxChgCurr,
@@ -354,7 +365,7 @@ void handle_es3BatParam() {
             }
         }
         else {
-            Serial.println("getBatParam error");
+            slog("getBatParam error", LOG_ERR);
         }
     }
 }
@@ -422,8 +433,7 @@ void handle_es3Log() {
                 
                 es3Log = data;
                 json_Log(msg, sizeof(msg), data);
-                Serial.println(msg);
-                syslog.log(LOG_INFO, msg);
+                slog(msg);
                 // TODO mqtt.publish(topic, msg);
                 snprintf(msg, sizeof(msg), lineFmt, (char *)es3Information.wSerial, WiFi.getHostname(), 
                     data.dwRunTime, data.wStartCnt, data.wLastFaultInfo, data.wFaultCnt, 
@@ -434,7 +444,7 @@ void handle_es3Log() {
             }
         }
         else {
-            Serial.println("getLog error");
+            slog("getLog error", LOG_ERR);
         }
     }
 }
@@ -497,8 +507,7 @@ void handle_es3Parameters() {
                 
                 es3Parameters = data;
                 json_Parameters(msg, sizeof(msg), data);
-                // Serial.println(msg);
-                // syslog.log(LOG_INFO, msg);
+                // slog(msg);
                 // TODO mqtt.publish(topic, msg);
                 snprintf(msg, sizeof(msg), lineFmt, (char *)es3Information.wSerial, WiFi.getHostname(), 
                     data.wPvVoltRatio, data.wPvVoltOffset, data.wBatVoltRatio, data.wBatVoltOffset, 
@@ -508,7 +517,7 @@ void handle_es3Parameters() {
             }
         }
         else {
-            Serial.println("getParameters error");
+            slog("getParameters error", LOG_ERR);
         }
     }
 }
@@ -572,8 +581,7 @@ void handle_es3LoadParam() {
                 
                 es3LoadParam = data;
                 json_LoadParam(msg, sizeof(msg), data);
-                Serial.println(msg);
-                syslog.log(LOG_INFO, msg);
+                slog(msg);
                 // TODO mqtt.publish(topic, msg);
                 snprintf(msg, sizeof(msg), lineFmt, (char *)es3Information.wSerial, WiFi.getHostname(), 
                     data.wLoadModuleSelect1, data.wLoadModuleSelect2, data.wLoadOnPvVolt, data.wLoadOffPvVolt, 
@@ -584,7 +592,7 @@ void handle_es3LoadParam() {
             }
         }
         else {
-            Serial.println("getLoadParam error");
+            slog("getLoadParam error", LOG_ERR);
         }
     }
 }
@@ -633,8 +641,7 @@ void handle_es3ProParam() {
                 
                 es3ProParam = data;
                 json_ProParam(msg, sizeof(msg), data);
-                Serial.println(msg);
-                syslog.log(LOG_INFO, msg);
+                slog(msg);
                 // TODO mqtt.publish(topic, msg);
                 snprintf(msg, sizeof(msg), lineFmt, (char *)es3Information.wSerial, WiFi.getHostname(), 
                     data.wLoadOvp, data.wLoadUvp, data.wBatOvp, data.wBatOvB, data.wBatUvp, data.wBatUvB);
@@ -642,7 +649,7 @@ void handle_es3ProParam() {
             }
         }
         else {
-            Serial.println("getProParam error");
+            slog("getProParam error", LOG_ERR);
         }
     }
 }
@@ -675,15 +682,14 @@ void handle_jbdHardware() {
 
                 jbdHardware = data;
                 json_Hardware(msg, sizeof(msg), data);
-                Serial.println(msg);
-                syslog.log(LOG_INFO, msg);
+                slog(msg);
                 // TODO mqtt.publish(topic, msg);
                 snprintf(msg, sizeof(msg), lineFmt, (char *)data.id, WiFi.getHostname());
                 postInflux(msg);
             }
         }
         else {
-            Serial.println("getHardware error");
+            slog("getHardware error", LOG_ERR);
         }
     }
 }
@@ -760,8 +766,7 @@ void handle_jbdStatus() {
 
                 jbdStatus = data;
                 json_Status(msg, sizeof(msg), data);
-                Serial.println(msg);
-                syslog.log(LOG_INFO, msg);
+                slog(msg);
                 // TODO mqtt.publish(topic, msg);
                 
                 size_t len = snprintf(msg, sizeof(msg), lineFmt, jbdHardware.id, WiFi.getHostname(), 
@@ -779,7 +784,7 @@ void handle_jbdStatus() {
             }
         }
         else {
-            Serial.println("getStatus error");
+            slog("getStatus error", LOG_ERR);
         }
     }
 }
@@ -824,8 +829,7 @@ void handle_jbdCells() {
 
                 jbdCells = data;
                 json_Cells(msg, sizeof(msg), data);
-                Serial.println(msg);
-                syslog.log(LOG_INFO, msg);
+                slog(msg);
                 // TODO mqtt.publish(topic, msg);
                 size_t len = snprintf(msg, sizeof(msg), lineFmt, jbdHardware.id, WiFi.getHostname());
                 for (size_t i=0; i < sizeof(data.voltages)/sizeof(*data.voltages) && len < sizeof(msg) && i < jbdStatus.cells; i++) {
@@ -836,7 +840,7 @@ void handle_jbdCells() {
             }
         }
         else {
-            Serial.println("getCells error");
+            slog("getCells error", LOG_ERR);
         }
     }
 }
@@ -1041,7 +1045,7 @@ void setup_webserver() {
 
     // Call this page to reset the ESP
     web_server.on("/reset", HTTP_POST, []() {
-        syslog.log(LOG_NOTICE, "RESET");
+        slog("RESET ESP32", LOG_NOTICE);
         web_server.send(200, "text/html",
                         "<html>\n"
                         " <head>\n"
@@ -1077,7 +1081,9 @@ void setup_webserver() {
     web_server.begin();
 
     MDNS.addService("http", "tcp", WEBSERVER_PORT);
-    syslog.logf(LOG_NOTICE, "Serving HTTP on port %d", WEBSERVER_PORT);
+
+    snprintf(msg, sizeof(msg), "Serving HTTP on port %d", WEBSERVER_PORT);
+    slog(msg, LOG_NOTICE);
 }
 
 
@@ -1102,14 +1108,14 @@ void handle_load_button( bool loadOn ) {
             pressed = true;
             if (esmart3.setLoad(!loadOn)) {
                 if( !loadOn ) {
-                    Serial.println("Load switched ON");
+                    slog("Load switched ON", LOG_NOTICE);
                 }
                 else {
-                    Serial.println("Load switched OFF");
+                    slog("Load switched OFF", LOG_NOTICE);
                 }
             }
             else {
-                Serial.println("Load UNKNOWN");
+                slog("Load UNKNOWN", LOG_ERR);
             }
         }
         // else if (debounceStatus) {
@@ -1134,11 +1140,11 @@ bool handle_load_led() {
             if( !prevStatus || loadOn != prevLoad ) {
                 if( loadOn ) {
                     digitalWrite(LOAD_LED_PIN, LOAD_LED_ON);
-                    Serial.println("Load is ON");
+                    slog("Load is ON", LOG_NOTICE);
                 }
                 else {
                     digitalWrite(LOAD_LED_PIN, LOAD_LED_OFF);
-                    Serial.println("Load is OFF");
+                    slog("Load is OFF", LOG_NOTICE);
                 }
                 prevStatus = true;
                 prevLoad = loadOn;
@@ -1147,7 +1153,7 @@ bool handle_load_led() {
         else {
             if( prevStatus ) {
                 digitalWrite(LOAD_LED_PIN, LOAD_LED_ON);  // assume ON
-                Serial.println("Load is UNKNOWN");
+                slog("Load is UNKNOWN", LOG_ERR);
                 prevStatus = false;
                 prevLoad = true;
             }
@@ -1174,7 +1180,8 @@ bool check_ntptime() {
         have_time = true;
         time_t now = time(NULL);
         strftime(start_time, sizeof(start_time), "%FT%T%Z", localtime(&now));
-        syslog.logf(LOG_NOTICE, "Got valid time at %s", start_time);
+        snprintf(msg, sizeof(msg), "Got valid time at %s", start_time);
+        slog(msg, LOG_NOTICE);
     }
 
     return have_time;
@@ -1221,6 +1228,20 @@ void handle_breathe() {
 }
 
 
+void handle_es3Time( bool time_valid ) {
+    static bool time_set = false;
+
+    if( !time_set && time_valid ) {
+        struct tm now;
+        getLocalTime(&now);  // TODO: ESP32 only?
+        if (esmart3.setTime(now)) {
+            time_set = true;
+            slog("eSmart3 time set", LOG_NOTICE);
+        }
+    }
+}
+
+
 // Set battery parameters for 4S, 272Ah
 // TODO set in webpage or mqtt, store preference
 // TODO maybe just a warning if parameters differ? 
@@ -1246,10 +1267,10 @@ void setup_LiFePO() {
     batParam.wMaxDisChgCurr = batParam.wMaxChgCurr;  // same as charge for LiFePO and eSmart3
 
     if( esmart3.setBatParam(batParam) ) {
-        Serial.println("setBatParam done");
+        slog("setBatParam done");
     }
     else {
-        Serial.println("setBatParam error");
+        slog("setBatParam error", LOG_ERR);
     }
 
     ESmart3::ProParam_t proParam = {0};
@@ -1260,17 +1281,11 @@ void setup_LiFePO() {
     proParam.wBatUvp = proParam.wLoadUvp - proParam.wLoadUvp / 10;  // protect battery 10% below wLoadUvp
     proParam.wBatUvB = proParam.wLoadUvp - 5;  // recovery slightly below wLoadUvp
     if( esmart3.setProParam(proParam) ) {
-        Serial.println("setProParam done");
+        slog("setProParam done");
     }
     else {
-        Serial.println("setProParam error");
+        slog("setProParam error", LOG_ERR);
     }
-}
-
-
-void slog(const char *msg) {
-    Serial.println(msg);
-    syslog.log(LOG_NOTICE, msg);
 }
 
 
@@ -1322,11 +1337,9 @@ void setup() {
     WiFiManager wm;
     // wm.resetSettings();
     if (!wm.autoConnect()) {
-        Serial.println("Failed to connect WLAN");
-        for (int i = 0; i < 1000; i += 200) {
-            digitalWrite(HEALTH_LED_PIN, HEALTH_LED_ON);
-            delay(100);
-            digitalWrite(HEALTH_LED_PIN, HEALTH_LED_OFF);
+        Serial.println("Failed to connect WLAN, about to reset");
+        for (int i = 0; i < 20; i++) {
+            digitalWrite(HEALTH_LED_PIN, (i & 1) ? HEALTH_LED_ON : HEALTH_LED_OFF);
             delay(100);
         }
         ESP.restart();
@@ -1338,13 +1351,12 @@ void setup() {
     char msg[80];
     snprintf(msg, sizeof(msg), "%s Version %s, WLAN IP is %s", PROGNAME, VERSION,
         WiFi.localIP().toString().c_str());
-    Serial.println(msg);
-    syslog.logf(LOG_NOTICE, msg);
+    slog(msg, LOG_NOTICE);
 
     #if defined(ESP8266)
         ntp.begin();
     #else
-        configTime(0, 0, NTP_SERVER);
+        configTime(3600, 3600, NTP_SERVER);  // MEZ/MESZ
     #endif
 
     MDNS.begin(WiFi.getHostname());
@@ -1376,7 +1388,7 @@ void setup() {
 
     jbdbms.begin(RS485_DIR_PIN);  // same pin as esmart3
 
-    Serial.println("Setup done");
+    slog("Setup done", LOG_NOTICE);
 }
 
 
@@ -1387,6 +1399,7 @@ void loop() {
     
     bool have_time = check_ntptime();
     if( es3Information.wSerial[0] ) {  // we have required esmart3 infos
+        handle_es3Time(have_time);
         handle_es3ChgSts();
         handle_es3BatParam();
         handle_es3Log();
