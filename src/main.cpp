@@ -928,6 +928,11 @@ const char *main_page( const char *body ) {
     time(&now);
     strftime(curr_time, sizeof(curr_time), "%FT%T", localtime(&now));
     strftime(influx_time, sizeof(influx_time), "%FT%T", localtime(&post_time));
+    if( !*body && (es3ChgSts.wFault || jbdStatus.fault || influx_status < 200 || influx_status >= 300 ) ) {
+        snprintf(msg, sizeof(msg), "WARNING: %s %s %s", es3ChgSts.wFault ? "Charger" : "", 
+            jbdStatus.fault ? "BMS" : "", (influx_status < 200 || influx_status >= 300) ? "Database" : "");
+        body = msg;
+    }
     snprintf(page, sizeof(page), fmt, (char *)es3Information.wModel, jbdHardware.id, 
         (char *)es3Information.wModel, jbdHardware.id, 
         jbdStatus.mosfetStatus & JbdBms::MOSFET_CHARGE ? "checked " : "", 
