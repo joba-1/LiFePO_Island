@@ -926,8 +926,8 @@ const char *main_page( const char *body ) {
     static char curr_time[30], influx_time[30];
     time_t now;
     time(&now);
-    strftime(curr_time, sizeof(curr_time), "%FT%T%Z", localtime(&now));
-    strftime(influx_time, sizeof(influx_time), "%FT%T%Z", localtime(&post_time));
+    strftime(curr_time, sizeof(curr_time), "%FT%T", localtime(&now));
+    strftime(influx_time, sizeof(influx_time), "%FT%T", localtime(&post_time));
     snprintf(page, sizeof(page), fmt, (char *)es3Information.wModel, jbdHardware.id, 
         (char *)es3Information.wModel, jbdHardware.id, 
         jbdStatus.mosfetStatus & JbdBms::MOSFET_CHARGE ? "checked " : "", 
@@ -1194,7 +1194,7 @@ bool check_ntptime() {
     if (!have_time && valid_time) {
         have_time = true;
         time_t now = time(NULL);
-        strftime(start_time, sizeof(start_time), "%FT%T%Z", localtime(&now));
+        strftime(start_time, sizeof(start_time), "%FT%T", localtime(&now));
         snprintf(msg, sizeof(msg), "Got valid time at %s", start_time);
         slog(msg, LOG_NOTICE);
     }
