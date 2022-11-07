@@ -1394,7 +1394,7 @@ void handle_mqtt( bool time_valid ) {
         uint32_t now = millis();
         if (now - prev > interval) {
             if (mqtt.connect(HOSTNAME, MQTT_TOPIC "/status/LWT", 0, true, "Offline")
-             && mqtt.publish(MQTT_TOPIC "/status/LWT", "Online")
+             && mqtt.publish(MQTT_TOPIC "/status/LWT", "Online", true)
              && mqtt.publish(MQTT_TOPIC "/status/Hostname", HOSTNAME)
              && mqtt.publish(MQTT_TOPIC "/status/DBServer", INFLUX_SERVER)
              && mqtt.publish(MQTT_TOPIC "/status/DBPort", itoa(INFLUX_PORT, msg, 10))
@@ -1403,12 +1403,12 @@ void handle_mqtt( bool time_valid ) {
              && (!time_valid || mqtt.publish(MQTT_TOPIC "/status/StartTime", start_time))
              && mqtt.subscribe(MQTT_TOPIC "/cmd")) {
                 snprintf(msg, sizeof(msg), "Connected to MQTT broker %s:%d using topic %s", MQTT_SERVER, MQTT_PORT, MQTT_TOPIC);
-                slog(msg);
+                slog(msg, LOG_NOTICE);
             }
             else {
                 mqtt.disconnect();
                 snprintf(msg, sizeof(msg), "Connect to MQTT broker %s:%d failed", MQTT_SERVER, MQTT_PORT);
-                slog(msg);
+                slog(msg, LOG_ERR);
             }
             prev = now;
         }
