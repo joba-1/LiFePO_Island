@@ -3,7 +3,8 @@
 ESP32 Arduino firmware to monitor Jbd Battery Management Systems and eSmart3 chargers. 
 Sends status to an Influx db with the [Joba_JbdBms](https://github.com/joba-1/Joba_JbdBms) 
 and [Joba_ESmart3](https://github.com/joba-1/Joba_ESmart3) libraries.
-Switching eSmart3 load and JbdBms mosfets on and off is also possible.
+Status is also sent to an mqtt broker.
+Switching eSmart3 load and JbdBms mosfets on and off via web page is also possible.
 For now, battery parameters for LiFePO are always set at startup.
 
 ![lifepo-island-test-rig-IMG-2929](https://user-images.githubusercontent.com/32450554/199218951-2d38cff8-8812-4187-9072-7caadacad0b7.jpg)
@@ -86,8 +87,9 @@ since WiFi is needed for Influx anyways, it is used for other stuff as well:
     * display links for JSON of all eSmart3 item categories and JbdBms commands
     * enables OTA firmware update
     * later: display and change some values of BatParam, LoadParam, ProParam and Log
-* Syslog (and later mqtt publish) of status on changes
+* Syslog and mqtt publish of status on changes
 * NTP to set eSmart3 time at startup once
+* RSSI and BSSID monitoring to find a place with good WLAN signal reception for the ESP32
 
 ![LiFePO_Island](https://user-images.githubusercontent.com/32450554/199284797-8ae049ff-4aa1-495b-8e3d-3111fb9d40d6.png)
 
