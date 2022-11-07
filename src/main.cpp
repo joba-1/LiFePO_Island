@@ -1406,8 +1406,9 @@ void handle_mqtt( bool time_valid ) {
                 slog(msg, LOG_NOTICE);
             }
             else {
+                int error = mqtt.state();
                 mqtt.disconnect();
-                snprintf(msg, sizeof(msg), "Connect to MQTT broker %s:%d failed", MQTT_SERVER, MQTT_PORT);
+                snprintf(msg, sizeof(msg), "Connect to MQTT broker %s:%d failed with code %d", MQTT_SERVER, MQTT_PORT, error);
                 slog(msg, LOG_ERR);
             }
             prev = now;
