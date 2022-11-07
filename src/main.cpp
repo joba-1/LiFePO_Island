@@ -1378,7 +1378,7 @@ void print_reset_reason(int core) {
 
 // Called on incoming mqtt messages
 void mqtt_callback(char* topic, byte* payload, unsigned int length) {
-    snprintf(msg, sizeof(msg), "Ignore mqtt %s: '%s'", topic, (char *)payload);
+    snprintf(msg, sizeof(msg), "Ignore mqtt %s: '%.*s'", topic, length, (char *)payload);
     slog(msg, LOG_WARNING);
 }
 
