@@ -189,6 +189,91 @@ bool postInflux(const char *line) {
 }
 
 
+// Wifi status as JSON
+bool json_Wifi(char *json, size_t maxlen, const char *bssid, int8_t rssi) {
+    static const char jsonFmt[] =
+        "{\"Version\":" VERSION ",\"Hostname\":\"%s\",\"Wifi\":{"
+        "\"BSSID\":\"%s\","
+        "\"RSSID\":%d}}";
+
+    int len = snprintf(json, maxlen, jsonFmt, WiFi.getHostname(), bssid, rssi);
+
+    return len < maxlen;
+}
+
+
+char lastBssid[] = "00:00:00:00:00:00";  // last known connected AP (for web page) 
+int8_t lastRssi = 0;                    // last RSSI (for web page)
+
+// Report a change of RSSI or BSSID
+void report_wifi( int8_t rssi, const byte *bssid ) {
+    static const char digits[] = "0123456789abcdef";
+    static const char lineFmt[] =
+        "Wifi,Host=%s,Version=" VERSION " "
+        "BSSID=\"%s\","
+        "RSSI=%d";
+    static const uint32_t interval = 10000;
+    static const int8_t min_diff = 5;
+    static uint32_t prev = 0;
+    static int8_t reportedRssi = 0;
+
+    // Update for web page
+    lastRssi = rssi;
+    for (size_t i=0; i<sizeof(lastBssid); i+=3) {
+        lastBssid[i] = digits[bssid[i/3] >> 4];
+        lastBssid[i+1] = digits[bssid[i/3] & 0xf];
+    }
+
+    // RSSI rate limit for log and db
+    int8_t diff = reportedRssi - lastRssi;
+    if (diff < 0 ) {
+        diff = -diff;
+    }
+    uint32_t now = millis();
+    if (diff >= min_diff || (now - prev > interval) ) {
+        json_Wifi(msg, sizeof(msg), lastBssid, lastRssi);
+        slog(msg);
+        publish(MQTT_TOPIC "/json/Wifi", msg);
+
+        snprintf(msg, sizeof(msg), lineFmt, WiFi.getHostname(), lastBssid, lastRssi);
+        postInflux(msg);
+
+        reportedRssi = lastRssi;
+        prev = now;
+    }
+}
+
+
+// check and report RSSI and BSSID changes
+void handle_wifi() {
+    static byte prevBssid[6] = {0};
+    static int8_t prevRssi = 0;
+    static bool prevConnected = false;
+
+    bool currConnected = WiFi.isConnected();
+    int8_t currRssi = 0;
+    byte *currBssid = prevBssid;
+
+    if (currConnected) {
+        currRssi = WiFi.RSSI();
+        currBssid = WiFi.BSSID();
+
+        if (!prevConnected) {
+            report_wifi(prevRssi, prevBssid);
+        }
+
+        if (currRssi != prevRssi || memcmp(currBssid, prevBssid, sizeof(prevBssid))) {
+            report_wifi(currRssi, currBssid);
+        }
+
+        memcpy(prevBssid, currBssid, sizeof(prevBssid));
+    }
+
+    prevRssi = currRssi;
+    prevConnected = currConnected;
+}
+
+
 bool json_Information(char *json, size_t maxlen, ESmart3::Information_t data) {
     static const char jsonFmt[] =
         "{\"Version\":" VERSION ",\"Serial\":\"%8.8s\",\"Information\":{"
@@ -942,11 +1027,14 @@ const char *main_page( const char *body ) {
         "   <tr><td>Status</td><td><a href=\"/json/Status\">JSON</a></td></tr>\n"
         "   <tr><td>Cells</td><td><a href=\"/json/Cells\">JSON</a></td></tr>\n"
         "   <tr><td></td></tr>\n"
+        "   <tr><td>Wifi</td><td><a href=\"/json/Wifi\">JSON</a></td></tr>\n"
+        "   <tr><td></td></tr>\n"
         "   <tr><td>Post firmware image to</td><td><a href=\"/update\">/update</a></td></tr>\n"
         "   <tr><td>Last start time</td><td>%s</td></tr>\n"
         "   <tr><td>Last web update</td><td>%s</td></tr>\n"
         "   <tr><td>Last influx update</td><td>%s</td></tr>\n"
         "   <tr><td>Influx status</td><td>%d</td></tr>\n"
+        "   <tr><td>RSSI %s</td><td>%d</td></tr>\n"
         "  </table></p>\n"
         "  <p><table><tr>\n"
         "   <td><form action=\"/\" method=\"get\">\n"
@@ -977,7 +1065,7 @@ const char *main_page( const char *body ) {
         (char *)es3Information.wModel, jbdHardware.id, 
         jbdStatus.mosfetStatus & JbdBms::MOSFET_CHARGE ? "checked " : "", 
         jbdStatus.mosfetStatus & JbdBms::MOSFET_DISCHARGE ? "checked " : "", 
-        body, start_time, curr_time, influx_time, influx_status);
+        body, start_time, curr_time, influx_time, influx_status, lastBssid, lastRssi);
     return page;
 }
 
@@ -1099,6 +1187,11 @@ void setup_webserver() {
 
     web_server.on("/json/Cells", []() {
         json_Cells(msg, sizeof(msg), jbdCells);
+        web_server.send(200, "application/json", msg);
+    });
+
+    web_server.on("/json/Wifi", []() {
+        json_Wifi(msg, sizeof(msg), lastBssid, lastRssi);
         web_server.send(200, "application/json", msg);
     });
 
@@ -1532,4 +1625,5 @@ void loop() {
     handle_load_button(handle_load_led());
     web_server.handleClient();
     handle_mqtt(have_time);
+    handle_wifi();
 }
