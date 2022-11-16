@@ -48,7 +48,7 @@ Use pin 22 to toggle RS485 read/write
 #elif defined(ESP32)
     HardwareSerial &rs485 = Serial2;
     #define RS485_DIR_PIN -1  // != -1: Use pin for explicit DE/!RE
-    #define RS485_RX_PIN  12  // != -1: Use non-default pin for Rx
+    #define RS485_RX_PIN  14  // != -1: Use non-default pin for Rx
     #define RS485_TX_PIN  13  // != -1: Use non-default pin for Tx
 
     #define HEALTH_LED_ON HIGH
@@ -194,7 +194,7 @@ bool json_Wifi(char *json, size_t maxlen, const char *bssid, int8_t rssi) {
     static const char jsonFmt[] =
         "{\"Version\":" VERSION ",\"Hostname\":\"%s\",\"Wifi\":{"
         "\"BSSID\":\"%s\","
-        "\"RSSID\":%d}}";
+        "\"RSSI\":%d}}";
 
     int len = snprintf(json, maxlen, jsonFmt, WiFi.getHostname(), bssid, rssi);
 
@@ -250,6 +250,11 @@ void handle_wifi() {
     static int8_t prevRssi = 0;
     static bool prevConnected = false;
 
+    static const uint32_t reconnectInterval = 10000;  // try reconnect every 10s
+    static const uint32_t reconnectLimit = 60;        // try restart after 10min
+    static uint32_t reconnectPrev = 0;
+    static uint32_t reconnectCount = 0;
+
     bool currConnected = WiFi.isConnected();
     int8_t currRssi = 0;
     byte *currBssid = prevBssid;
@@ -267,6 +272,25 @@ void handle_wifi() {
         }
 
         memcpy(prevBssid, currBssid, sizeof(prevBssid));
+        reconnectCount = 0;
+    }
+    else {
+        uint32_t now = millis();
+        if (reconnectCount == 0 || now - reconnectPrev > reconnectInterval) {
+            WiFi.reconnect();
+            reconnectCount++;
+            if (reconnectCount > reconnectLimit) {
+                Serial.println("Failed to reconnect WLAN, about to reset");
+                for (int i = 0; i < 20; i++) {
+                    digitalWrite(HEALTH_LED_PIN, (i & 1) ? HEALTH_LED_ON : HEALTH_LED_OFF);
+                    delay(100);
+                }
+                ESP.restart();
+                while (true)
+                    ;
+            }
+            reconnectPrev = now;
+        }
     }
 
     prevRssi = currRssi;
@@ -1533,7 +1557,8 @@ void setup() {
 
     WiFiManager wm;
     // wm.resetSettings();
-    if (!wm.autoConnect()) {
+    wm.setConfigPortalTimeout(180);
+    if (!wm.autoConnect(WiFi.getHostname(), WiFi.getHostname())) {
         Serial.println("Failed to connect WLAN, about to reset");
         for (int i = 0; i < 20; i++) {
             digitalWrite(HEALTH_LED_PIN, (i & 1) ? HEALTH_LED_ON : HEALTH_LED_OFF);
