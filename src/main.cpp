@@ -84,6 +84,8 @@ Use pin 22 to toggle RS485 read/write
 #endif
 
 // Infrastructure
+// #include <LittleFS.h>
+#include <EEPROM.h>
 #include <Syslog.h>
 #include <WiFiManager.h>
 
@@ -194,16 +196,17 @@ bool json_Wifi(char *json, size_t maxlen, const char *bssid, int8_t rssi) {
     static const char jsonFmt[] =
         "{\"Version\":" VERSION ",\"Hostname\":\"%s\",\"Wifi\":{"
         "\"BSSID\":\"%s\","
+        "\"IP\":\"%s\","
         "\"RSSI\":%d}}";
 
-    int len = snprintf(json, maxlen, jsonFmt, WiFi.getHostname(), bssid, rssi);
+    int len = snprintf(json, maxlen, jsonFmt, WiFi.getHostname(), bssid, WiFi.localIP().toString().c_str(), rssi);
 
     return len < maxlen;
 }
 
 
 char lastBssid[] = "00:00:00:00:00:00";  // last known connected AP (for web page) 
-int8_t lastRssi = 0;                    // last RSSI (for web page)
+int8_t lastRssi = 0;                     // last RSSI (for web page)
 
 // Report a change of RSSI or BSSID
 void report_wifi( int8_t rssi, const byte *bssid ) {
@@ -211,6 +214,7 @@ void report_wifi( int8_t rssi, const byte *bssid ) {
     static const char lineFmt[] =
         "Wifi,Host=%s,Version=" VERSION " "
         "BSSID=\"%s\","
+        "IP=\"%s\","
         "RSSI=%d";
     static const uint32_t interval = 10000;
     static const int8_t min_diff = 5;
@@ -235,7 +239,7 @@ void report_wifi( int8_t rssi, const byte *bssid ) {
         slog(msg);
         publish(MQTT_TOPIC "/json/Wifi", msg);
 
-        snprintf(msg, sizeof(msg), lineFmt, WiFi.getHostname(), lastBssid, lastRssi);
+        snprintf(msg, sizeof(msg), lineFmt, WiFi.getHostname(), lastBssid, WiFi.localIP().toString().c_str(), lastRssi);
         postInflux(msg);
 
         reportedRssi = lastRssi;
@@ -1010,12 +1014,17 @@ void handle_jbdCells() {
 }
 
 
+char web_msg[80] = "";  // main web page displays and then clears this
+bool changeIp = false;  // if true, ip changes after display of root url
+IPAddress ip;           // the ip to change to (use DHCP if 0)
+
 // Standard web page
-const char *main_page( const char *body ) {
+const char *main_page() {
     static const char fmt[] =
         "<html>\n"
         " <head>\n"
         "  <title>" PROGNAME " %.16s %.32s v" VERSION "</title>\n"
+        "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">\n"
         "  <meta http-equiv=\"expires\" content=\"5\">\n"
         " </head>\n"
         " <body>\n"
@@ -1059,6 +1068,10 @@ const char *main_page( const char *body ) {
         "   <tr><td>Last influx update</td><td>%s</td></tr>\n"
         "   <tr><td>Influx status</td><td>%d</td></tr>\n"
         "   <tr><td>RSSI %s</td><td>%d</td></tr>\n"
+        "   <tr><form action=\"ip\" method=\"post\">\n"
+        "    <td>IP <input type=\"text\" id=\"ip\" name=\"ip\" value=\"%s\" /></td>\n"
+        "    <td><input type=\"submit\" name=\"change\" value=\"Change IP\" /></td>\n"
+        "   </form></tr>\n"
         "  </table></p>\n"
         "  <p><table><tr>\n"
         "   <td><form action=\"/\" method=\"get\">\n"
@@ -1080,18 +1093,56 @@ const char *main_page( const char *body ) {
     time(&now);
     strftime(curr_time, sizeof(curr_time), "%FT%T", localtime(&now));
     strftime(influx_time, sizeof(influx_time), "%FT%T", localtime(&post_time));
-    if( !*body && (es3ChgSts.wFault || jbdStatus.fault || influx_status < 200 || influx_status >= 300 ) ) {
-        snprintf(msg, sizeof(msg), "WARNING: %s %s %s", es3ChgSts.wFault ? "Charger" : "", 
+    if( !*web_msg && (es3ChgSts.wFault || jbdStatus.fault || influx_status < 200 || influx_status >= 300 ) ) {
+        snprintf(web_msg, sizeof(web_msg), "WARNING: %s %s %s", es3ChgSts.wFault ? "Charger" : "", 
             jbdStatus.fault ? "BMS" : "", (influx_status < 200 || influx_status >= 300) ? "Database" : "");
-        body = msg;
     }
     snprintf(page, sizeof(page), fmt, (char *)es3Information.wModel, jbdHardware.id, 
         (char *)es3Information.wModel, jbdHardware.id, 
         jbdStatus.mosfetStatus & JbdBms::MOSFET_CHARGE ? "checked " : "", 
         jbdStatus.mosfetStatus & JbdBms::MOSFET_DISCHARGE ? "checked " : "", 
-        body, start_time, curr_time, influx_time, influx_status, lastBssid, lastRssi);
+        web_msg, start_time, curr_time, influx_time, influx_status, lastBssid, lastRssi, WiFi.localIP().toString().c_str());
+    *web_msg = '\0';
     return page;
 }
+
+
+// Read and write ip config
+bool ip_config(uint32_t *ip, int num_ip, bool write = false) {
+    const uint32_t magic = 0xdeadbeef;
+    size_t got_bytes = 0;
+    size_t want_bytes = sizeof(*ip) * num_ip;
+    if (*ip != 0xffffffff && EEPROM.begin(want_bytes + sizeof(uint32_t))) {
+        if (write) {
+            got_bytes = EEPROM.writeBytes(0, ip, want_bytes);
+            EEPROM.writeULong(want_bytes, magic);
+            EEPROM.commit();
+
+        }
+        else {
+            got_bytes = EEPROM.readBytes(0, ip, want_bytes);
+            if (EEPROM.readULong(want_bytes) != magic) {
+                got_bytes = 0;
+            }
+        }
+        EEPROM.end();
+    }
+    return got_bytes == want_bytes && *ip != 0xffffffff;
+}
+
+// bool ip_config(uint32_t *ip, int num_ip, bool write = false) {
+//     size_t got_bytes = 0;
+//     size_t want_bytes = sizeof(*ip) * num_ip;
+//     if (LittleFS.begin(write)) {
+//         File f = LittleFS.open("ip.cfg", write ? "w" : "r", write);
+//         if (f) {
+//             got_bytes = write ? f.write((uint8_t *)ip, want_bytes) : f.read((uint8_t *)ip, want_bytes);
+//             f.close();
+//         }
+//         LittleFS.end();
+//     }
+//     return got_bytes == want_bytes;
+// }
 
 
 // Define web pages for update, reset or for event infos
@@ -1105,7 +1156,9 @@ void setup_webserver() {
                 msg = on ? "Load on" : "Load off";
             }
         }
-        web_server.send(200, "text/html", main_page(msg)); 
+        snprintf(web_msg, sizeof(web_msg), "%s", msg);
+        web_server.sendHeader("Location", "/", true);  
+        web_server.send(302, "text/plain", "");
     });
 
     web_server.on("/on", HTTP_POST, []() {
@@ -1116,7 +1169,9 @@ void setup_webserver() {
                 msg = "Load unknown";
             }
         }
-        web_server.send(200, "text/html", main_page(msg)); 
+        snprintf(web_msg, sizeof(web_msg), "%s", msg);
+        web_server.sendHeader("Location", "/", true);  
+        web_server.send(302, "text/plain", "");
     });
 
     web_server.on("/off", HTTP_POST, []() {
@@ -1127,7 +1182,9 @@ void setup_webserver() {
                 msg = "Load unknown";
             }
         }
-        web_server.send(200, "text/html", main_page(msg)); 
+        snprintf(web_msg, sizeof(web_msg), "%s", msg);
+        web_server.sendHeader("Location", "/", true);  
+        web_server.send(302, "text/plain", "");
     });
 
 
@@ -1164,7 +1221,9 @@ void setup_webserver() {
             }
         }
 
-        web_server.send(200, "text/html", main_page(msg)); 
+        snprintf(web_msg, sizeof(web_msg), "%s", msg);
+        web_server.sendHeader("Location", "/", true);  
+        web_server.send(302, "text/plain", "");
     });
 
 
@@ -1220,6 +1279,45 @@ void setup_webserver() {
     });
 
 
+    // Change host part of ip, if ip&subnet == 0 -> dynamic
+    web_server.on("/ip", HTTP_POST, []() {
+        String strIp = web_server.arg("ip");
+        uint16_t prio = LOG_ERR;
+        if (ip.fromString(strIp)) {
+            uint32_t newIp = (uint32_t)ip;
+            uint32_t oldIp = (uint32_t)WiFi.localIP();
+            uint32_t subMask = (uint32_t)WiFi.subnetMask();
+            if (newIp) {
+                // make sure new ip is in the same subnet
+                uint32_t netIp = oldIp & (uint32_t)WiFi.subnetMask();
+                newIp = (newIp & ~subMask) | netIp;
+            }
+            if (newIp != oldIp) {
+                // don't accidentially use broadcast address
+                if ((newIp & ~subMask) != ~subMask) {
+                    changeIp = true;
+                    ip = newIp;
+                    snprintf(web_msg, sizeof(web_msg), "Change IP to '%s'", ip.toString().c_str());
+                    prio = LOG_WARNING;
+                }
+                else {
+                    snprintf(web_msg, sizeof(web_msg), "Broadcast address '%s' not possible", IPAddress(newIp).toString().c_str());
+                }
+            }
+            else {
+                snprintf(web_msg, sizeof(web_msg), "No IP change for '%s'", strIp.c_str());
+                prio = LOG_WARNING;
+            }
+        }
+        else {
+            snprintf(web_msg, sizeof(web_msg), "Invalid ip '%s'", strIp.c_str());
+        }
+        slog(web_msg, prio);
+
+        web_server.sendHeader("Location", "/", true);  
+        web_server.send(302, "text/plain", "");
+    });
+
     // Call this page to reset the ESP
     web_server.on("/reset", HTTP_POST, []() {
         slog("RESET ESP32", LOG_NOTICE);
@@ -1237,22 +1335,54 @@ void setup_webserver() {
 
     // Index page
     web_server.on("/", []() { 
-        web_server.send(200, "text/html", main_page(""));
+        web_server.send(200, "text/html", main_page());
+
+        if (changeIp) {
+            delay(200);  // let the send finish
+            bool ok = false;
+            if (ip != INADDR_NONE) {  // static
+                ok = WiFi.config(ip, WiFi.gatewayIP(), WiFi.subnetMask(), WiFi.dnsIP(0), WiFi.dnsIP(1));
+            }
+            else {  // dynamic
+                // How to decide if gw and dns was dhcp provided or static?
+                // Assuming it is fully dynamic with dhcp, so set to 0, not old values
+                ok = WiFi.config(0U, 0U, 0U);
+            }
+
+            snprintf(msg, sizeof(msg), "New IP config ip:%s, gw:%s, sn:%s, d0:%s, d1:%s", WiFi.localIP().toString().c_str(), WiFi.gatewayIP().toString().c_str(), 
+                WiFi.subnetMask().toString().c_str(), WiFi.dnsIP(0).toString().c_str(), WiFi.dnsIP(1).toString().c_str());
+            slog(msg, LOG_NOTICE);
+            if (ok) {
+                uint32_t ip[5] = { (uint32_t)WiFi.localIP(), (uint32_t)WiFi.gatewayIP(), (uint32_t)WiFi.subnetMask(), (uint32_t)WiFi.dnsIP(0), (uint32_t)WiFi.dnsIP(1) };
+                if (ip_config(ip, 5, true)) {
+                    slog("Wrote changed IP config");
+                }
+                else {
+                    slog("Write changed IP config failed");
+                }
+            }
+            changeIp = false;
+        }
     });
 
     // Toggle breathing status led if you dont like it or ota does not work
     web_server.on("/breathe", HTTP_POST, []() {
         enabledBreathing = !enabledBreathing; 
-        web_server.send(200, "text/html", main_page(enabledBreathing ? "breathing enabled" : "breathing disabled")); 
+        snprintf(web_msg, sizeof(web_msg), "%s", enabledBreathing ? "breathing enabled" : "breathing disabled");
+        web_server.sendHeader("Location", "/", true);  
+        web_server.send(302, "text/plain", "");
     });
 
     web_server.on("/breathe", HTTP_GET, []() {
-        web_server.send(200, "text/html", main_page(enabledBreathing ? "breathing enabled" : "breathing disabled")); 
+        snprintf(web_msg, sizeof(web_msg), "%s", enabledBreathing ? "breathing enabled" : "breathing disabled");
+        web_server.sendHeader("Location", "/", true);  
+        web_server.send(302, "text/plain", "");
     });
 
     // Catch all page
     web_server.onNotFound( []() { 
-        web_server.send(404, "text/html", main_page("<h2>page not found</h2>\n")); 
+        snprintf(web_msg, sizeof(web_msg), "%s", "<h2>page not found</h2>\n");
+        web_server.send(404, "text/html", main_page()); 
     });
 
     web_server.begin();
@@ -1558,6 +1688,10 @@ void setup() {
     WiFiManager wm;
     // wm.resetSettings();
     wm.setConfigPortalTimeout(180);
+    uint32_t ip[5] = {0};
+    if (ip_config(ip, 5) && ip[0]) {
+        wm.setSTAStaticIPConfig(IPAddress(ip[0]), IPAddress(ip[1]), IPAddress(ip[2]), IPAddress(ip[3]));
+    }
     if (!wm.autoConnect(WiFi.getHostname(), WiFi.getHostname())) {
         Serial.println("Failed to connect WLAN, about to reset");
         for (int i = 0; i < 20; i++) {
@@ -1567,6 +1701,15 @@ void setup() {
         ESP.restart();
         while (true)
             ;
+    }
+    uint32_t ip2[5] = { (uint32_t)WiFi.localIP(), (uint32_t)WiFi.gatewayIP(), (uint32_t)WiFi.subnetMask(), (uint32_t)WiFi.dnsIP(0), (uint32_t)WiFi.dnsIP(1) };
+    if (memcmp(ip, ip2, sizeof(ip))) {
+        if (ip_config(ip2, 5, true)) {
+            slog("Wrote IP config");
+        }
+        else {
+            slog("Write IP config failed");
+        }
     }
 
     digitalWrite(HEALTH_LED_PIN, HEALTH_LED_ON);
