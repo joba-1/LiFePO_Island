@@ -1625,6 +1625,25 @@ void print_reset_reason(int core) {
 
 // Called on incoming mqtt messages
 void mqtt_callback(char* topic, byte* payload, unsigned int length) {
+
+    typedef struct cmd { const char *name; void (*action)(void); } cmd_t;
+    
+    static cmd_t cmds[] = { 
+        { "load on", [](){ esmart3.setLoad(true); } },
+        { "load off", [](){ esmart3.setLoad(false); } }
+    };
+
+    if (strcasecmp(MQTT_TOPIC "/cmd", topic) == 0) {
+        for (auto &cmd: cmds) {
+            if (strncasecmp(cmd.name, (char *)payload, length) == 0) {
+                snprintf(msg, sizeof(msg), "Execute mqtt command '%s'", cmd.name);
+                slog(msg, LOG_INFO);
+                (*cmd.action)();
+                return;
+            }
+        }
+    }
+
     snprintf(msg, sizeof(msg), "Ignore mqtt %s: '%.*s'", topic, length, (char *)payload);
     slog(msg, LOG_WARNING);
 }

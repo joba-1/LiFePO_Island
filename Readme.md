@@ -88,6 +88,11 @@ since WiFi is needed for Influx anyways, it is used for other stuff as well:
     * enables OTA firmware update
     * later: display and change some values of BatParam, LoadParam, ProParam and Log
 * Syslog and mqtt publish of status on changes
+    * mqtt topic LiFePO_Island/{instance}/json/# for publishing eSmart3 or JBD infos in json format 
+    * mqtt topic LiFePO_Island/{instance}/status/# for publishing esmart3 or jbd fault status 
+    * mqtt topic LiFePO_Island/{instance}/cmd for receiving commands:
+        * "load on": switch eSmart3 load on
+        * "load off": switch eSmart3 load off
 * NTP to set eSmart3 time at startup once
 * RSSI and BSSID monitoring to find a place with good WLAN signal reception for the ESP32
 
