@@ -1021,10 +1021,12 @@ IPAddress ip;           // the ip to change to (use DHCP if 0)
 // Standard web page
 const char *main_page() {
     static const char fmt[] =
-        "<html>\n"
+        "<!doctype html>\n"
+        "<html lang=\"en\">\n"
         " <head>\n"
         "  <title>" PROGNAME " %.16s %.32s v" VERSION "</title>\n"
-        "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">\n"
+        "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
+        "  <meta charset=\"utf-8\">\n"
         "  <meta http-equiv=\"expires\" content=\"5\">\n"
         " </head>\n"
         " <body>\n"
