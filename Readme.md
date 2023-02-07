@@ -96,7 +96,11 @@ since WiFi is needed for Influx anyways, it is used for other stuff as well:
 * NTP to set eSmart3 time at startup once
 * RSSI and BSSID monitoring to find a place with good WLAN signal reception for the ESP32
 
+## Web interface
 ![LiFePO_Island](https://user-images.githubusercontent.com/32450554/199284797-8ae049ff-4aa1-495b-8e3d-3111fb9d40d6.png)
+
+## Grafana Panels using LiFePO_Island data
+![grafik](https://user-images.githubusercontent.com/32450554/217285351-9d3be438-0db6-45f2-9e24-08eabd34858e.png)
 
 Comments welcome
 
