@@ -1228,6 +1228,47 @@ void setup_webserver() {
         web_server.send(302, "text/plain", "");
     });
 
+    web_server.on("/switch", []() {
+        static const char fmt[] =
+            "<!doctype html>\n"
+            "<html lang=\"en\">\n"
+            " <head>\n"
+            "  <title>" PROGNAME " v" VERSION "</title>\n"
+            "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
+            "  <meta charset=\"utf-8\">\n"
+            " </head>\n"
+            " <body>\n"
+            "  <h1>" PROGNAME " v" VERSION "</h1>\n"
+            "   <form action=\"%s\" method=\"post\">\n"
+            "    <input type=\"submit\" name=\"switch\" value=\"%s\" />\n"
+            "   </form>\n"
+            " </body>\n"
+            "</html>\n";
+        static char page[sizeof(fmt) + 20] = "";
+
+        bool on;
+        const char *url = "switchoff";
+        const char *txt = "Off";
+        if (!esmart3.getLoad(on) || !on ) {
+            url = "switchon";
+            txt = "On";
+        }
+        snprintf(page, sizeof(page), fmt, url, txt);
+        web_server.send(200, "text/html", page);
+    });
+
+    web_server.on("/switchon", HTTP_POST, []() {
+        esmart3.setLoad(true);
+        web_server.sendHeader("Location", "/switch", true);  
+        web_server.send(302, "text/plain", "");
+    });
+
+    web_server.on("/switchoff", HTTP_POST, []() {
+        esmart3.setLoad(false);
+        web_server.sendHeader("Location", "/switch", true);  
+        web_server.send(302, "text/plain", "");
+    });
+
 
     web_server.on("/json/Information", []() {
         json_Information(msg, sizeof(msg), es3Information);
