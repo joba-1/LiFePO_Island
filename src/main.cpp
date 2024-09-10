@@ -197,9 +197,19 @@ bool json_Wifi(char *json, size_t maxlen, const char *bssid, int8_t rssi) {
         "{\"Version\":" VERSION ",\"Hostname\":\"%s\",\"Wifi\":{"
         "\"BSSID\":\"%s\","
         "\"IP\":\"%s\","
+        "\"Subnet\":\"%s\","
+        "\"Gateway\":\"%s\","
+        "\"DNS0\":\"%s\","
+        "\"DNS1\":\"%s\","
         "\"RSSI\":%d}}";
 
-    int len = snprintf(json, maxlen, jsonFmt, WiFi.getHostname(), bssid, WiFi.localIP().toString().c_str(), rssi);
+    int len = snprintf(json, maxlen, jsonFmt, WiFi.getHostname(), bssid, 
+        WiFi.localIP().toString().c_str(), 
+        WiFi.subnetMask().toString().c_str(), 
+        WiFi.gatewayIP().toString().c_str(), 
+        WiFi.dnsIP(0).toString().c_str(), 
+        WiFi.dnsIP(1).toString().c_str(), 
+        rssi);
 
     return len < maxlen;
 }
@@ -1752,6 +1762,7 @@ void setup() {
     wm.setConfigPortalTimeout(180);
     uint32_t ip[5] = {0};
     if (ip_config(ip, 5) && ip[0]) {
+        // TODO if dns ip changes, set it here once instead of ip[3]
         wm.setSTAStaticIPConfig(IPAddress(ip[0]), IPAddress(ip[1]), IPAddress(ip[2]), IPAddress(ip[3]));
     }
     if (!wm.autoConnect(WiFi.getHostname(), WiFi.getHostname())) {
