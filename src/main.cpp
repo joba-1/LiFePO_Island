@@ -1024,9 +1024,97 @@ void handle_jbdCells() {
 }
 
 
-char web_msg[80] = "";  // main web page displays and then clears this
-bool changeIp = false;  // if true, ip changes after display of root url
-IPAddress ip;           // the ip to change to (use DHCP if 0)
+// Copy verbose error status string into msg
+// Return length of message (ends in ' ...' if cut due to msg_size too small)
+size_t decode_error( char *msg, size_t msg_size ) {
+    char *endp = msg + msg_size;
+    char *cursor = msg;  // cursor position in msg
+
+    if (es3ChgSts.wFault) {
+        if (es3ChgSts.wFault &0b0000000001 && endp > cursor) {
+            cursor += snprintf(cursor, endp - cursor, "CHG: %s<br/>\n", "Battery over voltage");
+        }
+        if (es3ChgSts.wFault &0b0000000010 && endp > cursor) {
+            cursor += snprintf(cursor, endp - cursor, "CHG: %s<br/>\n", "PV over voltage");
+        }
+        if (es3ChgSts.wFault &0b0000000100 && endp > cursor) {
+            cursor += snprintf(cursor, endp - cursor, "CHG: %s<br/>\n", "Charge over current");
+        }
+        if (es3ChgSts.wFault &0b0000001000 && endp > cursor) {
+            cursor += snprintf(cursor, endp - cursor, "CHG: %s<br/>\n", "Discharge over current");
+        }
+        if (es3ChgSts.wFault &0b0000010000 && endp > cursor) {
+            cursor += snprintf(cursor, endp - cursor, "CHG: %s<br/>\n", "Battery temperature alarm");
+        }
+        if (es3ChgSts.wFault &0b0000100000 && endp > cursor) {
+            cursor += snprintf(cursor, endp - cursor, "CHG: %s<br/>\n", "Internal temperature alarm");
+        }
+        if (es3ChgSts.wFault &0b0001000000 && endp > cursor) {
+            cursor += snprintf(cursor, endp - cursor, "CHG: %s<br/>\n", "PV low voltage");
+        }
+        if (es3ChgSts.wFault &0b0010000000 && endp > cursor) {
+            cursor += snprintf(cursor, endp - cursor, "CHG: %s<br/>\n", "Battery low voltage");
+        }
+        if (es3ChgSts.wFault &0b0100000000 && endp > cursor) {
+            cursor += snprintf(cursor, endp - cursor, "CHG: %s<br/>\n", "Trip zero protection trigger");
+        }
+        if (es3ChgSts.wFault &0b1000000000 && endp > cursor) {
+            cursor += snprintf(cursor, endp - cursor, "CHG: %s<br/>\n", "In the control of manual switchgear");
+        }
+    }
+
+    if (jbdStatus.fault) {
+        if (jbdStatus.fault &0b0000000000001 && endp > cursor) {
+            cursor += snprintf(cursor, endp - cursor, "BMS: %s<br/>\n", "Cell block over voltage");
+        }
+        if (jbdStatus.fault &0b0000000000010 && endp > cursor) {
+            cursor += snprintf(cursor, endp - cursor, "BMS: %s<br/>\n", "Cell block under voltage");
+        }
+        if (jbdStatus.fault &0b0000000000100 && endp > cursor) {
+            cursor += snprintf(cursor, endp - cursor, "BMS: %s<br/>\n", "Battery over voltage");
+        }
+        if (jbdStatus.fault &0b0000000001000 && endp > cursor) {
+            cursor += snprintf(cursor, endp - cursor, "BMS: %s<br/>\n", "Battery under voltage");
+        }
+        if (jbdStatus.fault &0b0000000010000 && endp > cursor) {
+            cursor += snprintf(cursor, endp - cursor, "BMS: %s<br/>\n", "Charging over temperature");
+        }
+        if (jbdStatus.fault &0b0000000100000 && endp > cursor) {
+            cursor += snprintf(cursor, endp - cursor, "BMS: %s<br/>\n", "Charging low temperature");
+        }
+        if (jbdStatus.fault &0b0000001000000 && endp > cursor) {
+            cursor += snprintf(cursor, endp - cursor, "BMS: %s<br/>\n", "Discharging over temperature");
+        }
+        if (jbdStatus.fault &0b0000010000000 && endp > cursor) {
+            cursor += snprintf(cursor, endp - cursor, "BMS: %s<br/>\n", "Discharging low temperature");
+        }
+        if (jbdStatus.fault &0b0000100000000 && endp > cursor) {
+            cursor += snprintf(cursor, endp - cursor, "BMS: %s<br/>\n", "Charging over current");
+        }
+        if (jbdStatus.fault &0b0001000000000 && endp > cursor) {
+            cursor += snprintf(cursor, endp - cursor, "BMS: %s<br/>\n", "Discharging over current");
+        }
+        if (jbdStatus.fault &0b0010000000000 && endp > cursor) {
+            cursor += snprintf(cursor, endp - cursor, "BMS: %s<br/>\n", "Short circuit");
+        }
+        if (jbdStatus.fault &0b0100000000000 && endp > cursor) {
+            cursor += snprintf(cursor, endp - cursor, "BMS: %s<br/>\n", "Frontend IC error");
+        }
+        if (jbdStatus.fault &0b1000000000000 && endp > cursor) {
+            cursor += snprintf(cursor, endp - cursor, "BMS: %s<br/>\n", "MOS software lockout");
+        }
+    }
+
+    if (cursor >= endp) {
+        snprintf(endp - 5, 5, " ...");
+    }
+
+    return cursor - msg;
+}
+
+char web_msg[256] = "";  // main web page displays and then clears this
+bool changeIp = false;   // if true, ip changes after display of root url
+IPAddress ip;            // the ip to change to (use DHCP if 0)
 
 // Standard web page
 const char *main_page() {
@@ -1099,15 +1187,14 @@ const char *main_page() {
         "  <p><small>... by <a href=\"https://github.com/joba-1/LiFePO_Island\">Joachim Banzhaf</a>, " __DATE__ " " __TIME__ "</small></p>\n"
         " </body>\n"
         "</html>\n";
-    static char page[sizeof(fmt) + 500] = "";
+    static char page[sizeof(fmt) + 700] = "";
     static char curr_time[30], influx_time[30];
     time_t now;
     time(&now);
     strftime(curr_time, sizeof(curr_time), "%FT%T", localtime(&now));
     strftime(influx_time, sizeof(influx_time), "%FT%T", localtime(&post_time));
-    if( !*web_msg && (es3ChgSts.wFault || jbdStatus.fault || influx_status < 200 || influx_status >= 300 ) ) {
-        snprintf(web_msg, sizeof(web_msg), "WARNING: %s %s %s", es3ChgSts.wFault ? "Charger" : "", 
-            jbdStatus.fault ? "BMS" : "", (influx_status < 200 || influx_status >= 300) ? "Database" : "");
+    if (!*web_msg && (es3ChgSts.wFault || jbdStatus.fault)) {
+        decode_error(web_msg, sizeof(web_msg));
     }
     snprintf(page, sizeof(page), fmt, (char *)es3Information.wModel, jbdHardware.id, 
         (char *)es3Information.wModel, jbdHardware.id, 
@@ -1612,7 +1699,7 @@ void setup_LiFePO() {
     uint16_t s_cells = 4;  // 4, 8, 12, 16
     uint16_t p_cells = 1;  // 1 - 4
     uint16_t maxCellDeciVolt = 36;  // ~95% LiFePO capacity
-    uint16_t minCellDeciVolt = 31;  // ~15% LiFePO capacity
+    uint16_t minCellDeciVolt = 30;  // ~15% LiFePO capacity
     uint16_t capacityAh = 272;  // my LiFePO capacity
     uint16_t maxDeviceCurr = 400;  // max deciAmps of my eSmart3
     
