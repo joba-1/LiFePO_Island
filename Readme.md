@@ -1,11 +1,11 @@
-# Monitor for JbdBms Battery Management System and eSmart3 MPPT solar charger
+# Monitor for JbdBms Battery Management System and eSmart3/4 MPPT solar charger
 
-ESP32 Arduino firmware to monitor Jbd Battery Management Systems and eSmart3 chargers. 
+ESP32 Arduino firmware to monitor Jbd Battery Management Systems and eSmart3 or eSmart4 chargers. 
 Sends status to an Influx db with the [Joba_JbdBms](https://github.com/joba-1/Joba_JbdBms) 
 and [Joba_ESmart3](https://github.com/joba-1/Joba_ESmart3) libraries.
 Status is also sent to an mqtt broker.
-Switching eSmart3 load and JbdBms mosfets on and off via web page is also possible.
-For now, battery parameters for LiFePO are always set at startup.
+Switching eSmart3/4 load and JbdBms mosfets on and off via web page is also possible.
+For now, hardcoded battery parameters for LiFePO are always set at startup by setup_LiFePO().
 
 ![lifepo-island-test-rig-IMG-2929](https://user-images.githubusercontent.com/32450554/199218951-2d38cff8-8812-4187-9072-7caadacad0b7.jpg)
 
@@ -27,7 +27,7 @@ Required hardware:
 * A level shifter from 5V to 3.3V (at least 3 channels) if the MAX485 board does not already have one
 * An ESP32 (with USB connection or an additional serial-to-USB adapter for flashing)
 * Cable with one RJ45 plug and just wires on the other end. 1-8: A-, B+, nc, nc, Gnd, Gnd, 5V, 5V
-* eSmart3 MPPT charge controller
+* eSmart3 or eSmart4 MPPT charge controller
 * JBD BMS like SP04S010A
 * LiFePO battery, PV (or >16V power supply for testing)
 ``` 
@@ -88,12 +88,12 @@ since WiFi is needed for Influx anyways, it is used for other stuff as well:
     * enables OTA firmware update
     * later: display and change some values of BatParam, LoadParam, ProParam and Log
 * Syslog and mqtt publish of status on changes
-    * mqtt topic LiFePO_Island/{instance}/json/# for publishing eSmart3 or JBD infos in json format 
-    * mqtt topic LiFePO_Island/{instance}/status/# for publishing esmart3 or jbd fault status 
+    * mqtt topic LiFePO_Island/{instance}/json/# for publishing eSmart3/4 or JBD infos in json format 
+    * mqtt topic LiFePO_Island/{instance}/status/# for publishing esmart3/4 or jbd fault status 
     * mqtt topic LiFePO_Island/{instance}/cmd for receiving commands:
-        * "load on": switch eSmart3 load on
-        * "load off": switch eSmart3 load off
-* NTP to set eSmart3 time at startup once
+        * "load on": switch eSmart3/4 load on
+        * "load off": switch eSmart3/4 load off
+* NTP to set eSmart3/4 time at startup once
 * RSSI and BSSID monitoring to find a place with good WLAN signal reception for the ESP32
 
 ## Web interface

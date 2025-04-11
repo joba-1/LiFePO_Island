@@ -1486,7 +1486,7 @@ void setup_webserver() {
             else {  // dynamic
                 // How to decide if gw and dns was dhcp provided or static?
                 // Assuming it is fully dynamic with dhcp, so set to 0, not old values
-                ok = WiFi.config(0U, 0U, 0U);
+                ok = WiFi.config(0UL, 0UL, 0UL);
             }
 
             snprintf(msg, sizeof(msg), "New IP config ip:%s, gw:%s, sn:%s, d0:%s, d1:%s", WiFi.localIP().toString().c_str(), WiFi.gatewayIP().toString().c_str(), 
@@ -1701,7 +1701,7 @@ void setup_LiFePO() {
     uint16_t maxCellDeciVolt = 36;  // ~95% LiFePO capacity
     uint16_t minCellDeciVolt = 30;  // ~15% LiFePO capacity
     uint16_t capacityAh = 272;  // my LiFePO capacity
-    uint16_t maxDeviceCurr = 400;  // max deciAmps of my eSmart3
+    uint16_t maxDeviceCurr = 600;  // max deciAmps of my eSmart3
     
     ESmart3::BatParam_t batParam = {0};
     batParam.wBatType = 0;  // LiFePO: user(0)
@@ -1712,9 +1712,9 @@ void setup_LiFePO() {
     batParam.wEqualizeChgTime = 0;  // minutes refresh for lifepo
     batParam.wMaxChgCurr = capacityAh * p_cells * 10;  // 1C for LiFePO
     if( batParam.wMaxChgCurr > maxDeviceCurr ) {
-        batParam.wMaxChgCurr = maxDeviceCurr;  // eSmart3 40A limit
+        batParam.wMaxChgCurr = maxDeviceCurr;  // eSmart3 40A limit, esmart4 60A limit
     }
-    batParam.wMaxDisChgCurr = batParam.wMaxChgCurr;  // same as charge for LiFePO and eSmart3
+    batParam.wMaxDisChgCurr = 300;  // load max 30A for eSmart4 (eSmart3 claimed 40A but broke :()
 
     if( esmart3.setBatParam(batParam) ) {
         slog("setBatParam done");
@@ -1724,10 +1724,10 @@ void setup_LiFePO() {
     }
 
     ESmart3::ProParam_t proParam = {0};
-    proParam.wLoadOvp = 150;  // protect end device from >= 15V
+    proParam.wLoadOvp = 148;  // protect end device from >= 14.8V
     proParam.wLoadUvp = minCellDeciVolt * s_cells;  // protect battery from load if < 15% capa
-    proParam.wBatOvB = maxCellDeciVolt * s_cells + 5; // unprotect batttery at slightly above max voltage
-    proParam.wBatOvp = proParam.wBatOvB + proParam.wBatOvB / 10; // protect batttery from > 10% max voltage
+    proParam.wBatOvB = maxCellDeciVolt * s_cells + 5; // unprotect battery at slightly above max voltage
+    proParam.wBatOvp = proParam.wBatOvB + proParam.wBatOvB / 10; // protect battery from > 10% max voltage
     proParam.wBatUvp = proParam.wLoadUvp - proParam.wLoadUvp / 10;  // protect battery 10% below wLoadUvp
     proParam.wBatUvB = proParam.wLoadUvp - 5;  // recovery slightly below wLoadUvp
     if( esmart3.setProParam(proParam) ) {
@@ -1900,8 +1900,7 @@ void setup() {
     print_reset_reason(1);  // assume 2nd core (should I ask?)
 
     rs485.begin(9600, SERIAL_8N1, RS485_RX_PIN, RS485_TX_PIN, false, 1000);
-    ledcAttachPin(HEALTH_LED_PIN, HEALTH_PWM_CH);
-    ledcSetup(HEALTH_PWM_CH, 1000, PWMBITS);
+    ledcAttach(HEALTH_LED_PIN, 1000, PWMBITS);
 #else
     analogWriteRange(PWMRANGE);  // for health led breathing steps
     // init your non ESP serial port here
