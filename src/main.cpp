@@ -76,6 +76,7 @@ Use pin 22 to toggle RS485 read/write
     
     // Time sync
     #include <time.h>
+    #include <esp_sntp.h>
 
     // Reset reason
     #include "rom/rtc.h"
@@ -135,12 +136,39 @@ ESmart3 esmart3(rs485, &rs485_access_ms);  // Serial port to communicate with RS
 JbdBms jbdbms(rs485, &rs485_access_ms);  // Same serial port as esmart3 is ok, if parameters are the same
 
 
+// Runtime-configurable hosts (build flags are only the defaults)
+#include "NetConfig.h"
+NetConfig netConfig(SYSLOG_SERVER, SYSLOG_PORT, MQTT_SERVER, MQTT_PORT,
+                    INFLUX_SERVER, INFLUX_PORT, NTP_SERVER);
+
+// Status of the external resources for /api/netstatus (millis() stamps, 0 = never)
+uint32_t syslog_sent = 0, syslog_failed = 0, syslog_last_ok_ms = 0;
+uint32_t mqtt_last_connect_ms = 0, mqtt_connect_failures = 0;
+int mqtt_last_rc = -99;
+uint32_t mqtt_last_publish_ms = 0, mqtt_publish_failures = 0;
+uint32_t influx_last_ok_ms = 0, influx_failures = 0;
+volatile uint32_t ntp_last_reply_ms = 0;
+
+// Admin login for /update, /reset, /ip and POST /api/netconfig. Switching the
+// load and the mosfets stays open (operational use). The password comes from
+// the untracked secrets.ini (pio_secrets.py); without it there is no lock.
+#ifndef ADMIN_PASSWORD
+#define ADMIN_PASSWORD ""
+#endif
+static const char admin_user[] = "admin";
+
 void slog(const char *message, uint16_t pri = LOG_INFO) {
     static bool log_infos = true;
     
     if (pri < LOG_INFO || log_infos) {
         Serial.println(message);
-        syslog.log(pri, message);
+        if (syslog.log(pri, message)) {
+            syslog_sent++;
+            syslog_last_ok_ms = millis();
+        }
+        else {
+            syslog_failed++;
+        }
     }
 
     if (log_infos && millis() > 10 * 60 * 1000) {
@@ -151,7 +179,14 @@ void slog(const char *message, uint16_t pri = LOG_INFO) {
 
 
 void publish( const char *topic, const char *payload ) {
-    if (mqtt.connected() && !mqtt.publish(topic, payload)) {
+    if (!mqtt.connected()) {
+        return;
+    }
+    if (mqtt.publish(topic, payload)) {
+        mqtt_last_publish_ms = millis();
+    }
+    else {
+        mqtt_publish_failures++;
         slog("Mqtt publish failed");
     }
 }
@@ -164,7 +199,12 @@ bool postInflux(const char *line) {
     WiFiClient wifiHttp;
     HTTPClient http;
 
-    http.begin(wifiHttp, INFLUX_SERVER, INFLUX_PORT, uri);
+    const NetConfig::Values &net = netConfig.active();
+    if (!net.influxHost[0]) {
+        return false;   // InfluxDB disabled
+    }
+    http.setTimeout(2000);
+    http.begin(wifiHttp, net.influxHost, net.influxPort, uri);
     http.setUserAgent(PROGNAME);
     int prev = influx_status;
     influx_status = http.POST(line);
@@ -180,11 +220,13 @@ bool postInflux(const char *line) {
     }
 
     if (influx_status < 200 || influx_status >= 300) {
-        snprintf(msg, sizeof(msg), "Post %s:%d%s status=%d line='%s' response='%s'",
-            INFLUX_SERVER, INFLUX_PORT, uri, influx_status, line, payload.c_str());
+        influx_failures++;
+        snprintf(msg, sizeof(msg), "Post %s:%u%s status=%d line='%s' response='%s'",
+            net.influxHost, net.influxPort, uri, influx_status, line, payload.c_str());
         slog(msg, LOG_ERR);
         return false;
     }
+    influx_last_ok_ms = millis();
 
     post_time = time(NULL);
     return true;
@@ -1244,6 +1286,116 @@ bool ip_config(uint32_t *ip, int num_ip, bool write = false) {
 // }
 
 
+// true if allowed; otherwise answers with a 401 challenge
+bool admin_ok() {
+    if (!ADMIN_PASSWORD[0] || web_server.authenticate(admin_user, ADMIN_PASSWORD)) {
+        return true;
+    }
+    web_server.requestAuthentication(BASIC_AUTH, PROGNAME);
+    return false;
+}
+
+// JSON string with quotes/backslashes/control chars escaped (SSIDs are user data)
+String json_str(const char *v) {
+    String out("\"");
+    for (const char *p = v; *p; p++) {
+        if (*p == '"' || *p == '\\') { out += '\\'; out += *p; }
+        else if ((unsigned char)*p >= 0x20) { out += *p; }
+    }
+    out += '"';
+    return out;
+}
+
+long age_s(uint32_t ms) { return ms ? (long)((millis() - ms) / 1000) : -1L; }
+
+String netvalues_json(const NetConfig::Values &v) {
+    char buf[400];
+    snprintf(buf, sizeof(buf),   // validated host names need no escaping
+        "{\"syslogHost\":\"%s\",\"syslogPort\":%u,\"mqttHost\":\"%s\",\"mqttPort\":%u,"
+        "\"influxHost\":\"%s\",\"influxPort\":%u,\"ntp\":\"%s\"}",
+        v.syslogHost, v.syslogPort, v.mqttHost, v.mqttPort, v.influxHost, v.influxPort, v.ntp);
+    return String(buf);
+}
+
+String netconfig_json() {
+    return String("{\"source\":\"") + (netConfig.fromFlash() ? "flash" : "defaults")
+        + "\",\"active\":" + netvalues_json(netConfig.active())
+        + ",\"defaults\":" + netvalues_json(netConfig.defaults()) + "}";
+}
+
+String netstatus_json() {
+    const NetConfig::Values &v = netConfig.active();
+    time_t now = time(nullptr);
+    bool synced = now > 1582230020;
+    char buf[1100];
+    snprintf(buf, sizeof(buf),
+        "{\"firmware\":{\"name\":\"" PROGNAME "\",\"version\":\"" VERSION "\",\"built\":\"" __DATE__ " " __TIME__ "\"},"
+        "\"device\":{\"hostname\":%s,\"ip\":\"%s\",\"mac\":\"%s\",\"ssid\":%s,\"rssi\":%d,\"uptimeS\":%lu,\"adminLock\":%s},"
+        "\"configSource\":\"%s\","
+        "\"resources\":{"
+        "\"syslog\":{\"host\":\"%s\",\"port\":%u,\"sent\":%lu,\"failed\":%lu,\"lastOkAgeS\":%ld},"
+        "\"mqtt\":{\"host\":\"%s\",\"port\":%u,\"connected\":%s,\"lastConnectAgeS\":%ld,\"lastRc\":%d,"
+                  "\"connectFailures\":%lu,\"lastPublishAgeS\":%ld,\"publishFailures\":%lu},"
+        "\"influx\":{\"host\":\"%s\",\"port\":%u,\"database\":\"" INFLUX_DB "\",\"lastHttpCode\":%d,\"lastOkAgeS\":%ld,\"failures\":%lu},"
+        "\"ntp\":{\"server\":\"%s\",\"synced\":%s,\"lastReplyAgeS\":%ld}}}",
+        json_str(WiFi.getHostname()).c_str(), WiFi.localIP().toString().c_str(), WiFi.macAddress().c_str(),
+        json_str(WiFi.SSID().c_str()).c_str(), (int)WiFi.RSSI(), (unsigned long)(millis() / 1000),
+        ADMIN_PASSWORD[0] ? "true" : "false",
+        netConfig.fromFlash() ? "flash" : "defaults",
+        v.syslogHost, v.syslogPort, (unsigned long)syslog_sent, (unsigned long)syslog_failed, age_s(syslog_last_ok_ms),
+        v.mqttHost, v.mqttPort, mqtt.connected() ? "true" : "false", age_s(mqtt_last_connect_ms), mqtt_last_rc,
+        (unsigned long)mqtt_connect_failures, age_s(mqtt_last_publish_ms), (unsigned long)mqtt_publish_failures,
+        v.influxHost, v.influxPort, influx_status, age_s(influx_last_ok_ms), (unsigned long)influx_failures,
+        v.ntp, synced ? "true" : "false", age_s(ntp_last_reply_ms));
+    return String(buf);
+}
+
+// Apply one form field: false if present but too long / not a port
+bool apply_str(const char *name, char *dst, size_t cap) {
+    return !web_server.hasArg(name) || NetConfigValidate::copyField(dst, cap, web_server.arg(name).c_str());
+}
+bool apply_port(const char *name, uint16_t &dst) {
+    return !web_server.hasArg(name) || NetConfigValidate::parsePort(web_server.arg(name).c_str(), dst);
+}
+
+void netconfig_error(int code, const char *err, const char *field) {
+    char buf[128];
+    snprintf(buf, sizeof(buf), "{\"error\":\"%s\",\"field\":\"%s\"}", err, field ? field : "");
+    web_server.send(code, "application/json", buf);
+}
+
+bool should_reboot = false;   // handled in loop() after the answer went out
+uint32_t reboot_at = 0;
+
+// POST /api/netconfig: syslogHost/Port, mqttHost/Port, influxHost/Port, ntp; defaults=1; reboot=0
+void handle_netconfig_post() {
+    bool to_defaults = web_server.arg("defaults") == "1";
+    bool reboot = web_server.arg("reboot") != "0";
+    NetConfig::Values v = netConfig.active();
+    const char *bad = nullptr;
+    if (to_defaults) {
+        if (!netConfig.clear()) return netconfig_error(500, "nvs clear failed", nullptr);
+        v = netConfig.defaults();
+    }
+    else {
+        if (!apply_str("syslogHost", v.syslogHost, sizeof(v.syslogHost))) bad = "syslogHost";
+        else if (!apply_str("mqttHost", v.mqttHost, sizeof(v.mqttHost))) bad = "mqttHost";
+        else if (!apply_str("influxHost", v.influxHost, sizeof(v.influxHost))) bad = "influxHost";
+        else if (!apply_str("ntp", v.ntp, sizeof(v.ntp))) bad = "ntp";
+        else if (!apply_port("syslogPort", v.syslogPort)) bad = "syslogPort";
+        else if (!apply_port("mqttPort", v.mqttPort)) bad = "mqttPort";
+        else if (!apply_port("influxPort", v.influxPort)) bad = "influxPort";
+        else NetConfig::validate(v, &bad);
+        if (bad) return netconfig_error(400, "invalid value", bad);
+        if (!netConfig.save(v, &bad)) return netconfig_error(500, "store failed", bad);
+    }
+    if (reboot) { should_reboot = true; reboot_at = millis() + 1000; }
+    web_server.send(200, "application/json",
+        String("{\"ok\":true,\"source\":\"") + (to_defaults ? "defaults" : "flash")
+        + "\",\"values\":" + netvalues_json(v) + ",\"reboot\":" + (reboot ? "true" : "false") + "}");
+}
+
+
 // Define web pages for update, reset or for event infos
 void setup_webserver() {
     web_server.on("/toggle", HTTP_POST, []() {
@@ -1421,6 +1573,7 @@ void setup_webserver() {
 
     // Change host part of ip, if ip&subnet == 0 -> dynamic
     web_server.on("/ip", HTTP_POST, []() {
+        if (!admin_ok()) return;
         String strIp = web_server.arg("ip");
         uint16_t prio = LOG_ERR;
         if (ip.fromString(strIp)) {
@@ -1460,6 +1613,7 @@ void setup_webserver() {
 
     // Call this page to reset the ESP
     web_server.on("/reset", HTTP_POST, []() {
+        if (!admin_ok()) return;
         slog("RESET ESP32", LOG_NOTICE);
         web_server.send(200, "text/html",
                         "<html>\n"
@@ -1517,6 +1671,18 @@ void setup_webserver() {
         snprintf(web_msg, sizeof(web_msg), "%s", enabledBreathing ? "breathing enabled" : "breathing disabled");
         web_server.sendHeader("Location", "/", true);  
         web_server.send(302, "text/plain", "");
+    });
+
+    // Runtime network configuration and status (see Readme.md)
+    web_server.on("/api/netstatus", HTTP_GET, []() {
+        web_server.send(200, "application/json", netstatus_json());
+    });
+    web_server.on("/api/netconfig", HTTP_GET, []() {
+        web_server.send(200, "application/json", netconfig_json());
+    });
+    web_server.on("/api/netconfig", HTTP_POST, []() {
+        if (!admin_ok()) return;
+        handle_netconfig_post();
     });
 
     // Catch all page
@@ -1802,19 +1968,25 @@ void handle_mqtt( bool time_valid ) {
             if (mqtt.connect(HOSTNAME, MQTT_TOPIC "/status/LWT", 0, true, "Offline")
              && mqtt.publish(MQTT_TOPIC "/status/LWT", "Online", true)
              && mqtt.publish(MQTT_TOPIC "/status/Hostname", HOSTNAME)
-             && mqtt.publish(MQTT_TOPIC "/status/DBServer", INFLUX_SERVER)
-             && mqtt.publish(MQTT_TOPIC "/status/DBPort", itoa(INFLUX_PORT, msg, 10))
+             && mqtt.publish(MQTT_TOPIC "/status/DBServer", netConfig.active().influxHost)
+             && mqtt.publish(MQTT_TOPIC "/status/DBPort", itoa(netConfig.active().influxPort, msg, 10))
              && mqtt.publish(MQTT_TOPIC "/status/DBName", INFLUX_DB)
              && mqtt.publish(MQTT_TOPIC "/status/Version", VERSION)
              && (!time_valid || mqtt.publish(MQTT_TOPIC "/status/StartTime", start_time))
              && mqtt.subscribe(MQTT_TOPIC "/cmd")) {
-                snprintf(msg, sizeof(msg), "Connected to MQTT broker %s:%d using topic %s", MQTT_SERVER, MQTT_PORT, MQTT_TOPIC);
+                mqtt_last_connect_ms = millis();
+                mqtt_last_rc = mqtt.state();
+                snprintf(msg, sizeof(msg), "Connected to MQTT broker %s:%u using topic %s",
+                    netConfig.active().mqttHost, netConfig.active().mqttPort, MQTT_TOPIC);
                 slog(msg, LOG_NOTICE);
             }
             else {
                 int error = mqtt.state();
+                mqtt_last_rc = error;
+                mqtt_connect_failures++;
                 mqtt.disconnect();
-                snprintf(msg, sizeof(msg), "Connect to MQTT broker %s:%d failed with code %d", MQTT_SERVER, MQTT_PORT, error);
+                snprintf(msg, sizeof(msg), "Connect to MQTT broker %s:%u failed with code %d",
+                    netConfig.active().mqttHost, netConfig.active().mqttPort, error);
                 slog(msg, LOG_ERR);
             }
             prev = now;
@@ -1836,8 +2008,14 @@ void setup() {
     Serial.begin(BAUDRATE);
     Serial.println("\nStarting " PROGNAME " v" VERSION " " __DATE__ " " __TIME__);
 
-    // Syslog setup
-    syslog.server(SYSLOG_SERVER, SYSLOG_PORT);
+    // Hosts: NVS over build-flag defaults; the strings never move
+    netConfig.load();
+    const NetConfig::Values &net = netConfig.active();
+
+    // Syslog setup (the library resolves the name per packet: moved aliases are followed)
+    if (net.syslogHost[0]) {
+        syslog.server(net.syslogHost, net.syslogPort);
+    }
     syslog.deviceHostname(WiFi.getHostname());
     syslog.appName("Joba1");
     syslog.defaultPriority(LOG_KERN);
@@ -1878,18 +2056,33 @@ void setup() {
         WiFi.localIP().toString().c_str());
     slog(msg, LOG_NOTICE);
 
+    {
+        char nmsg[400];
+        snprintf(nmsg, sizeof(nmsg), "Netconfig (%s): syslog=%s:%u mqtt=%s:%u influx=%s:%u ntp=%s",
+            netConfig.fromFlash() ? "flash" : "defaults", net.syslogHost, net.syslogPort,
+            net.mqttHost, net.mqttPort, net.influxHost, net.influxPort, net.ntp);
+        slog(nmsg, LOG_NOTICE);
+    }
+
     #if defined(ESP8266)
+        ntp.setPoolServerName(net.ntp);
         ntp.begin();
     #else
-        configTime(3600, 3600, NTP_SERVER);  // MEZ/MESZ
+        sntp_set_time_sync_notification_cb([](struct timeval *) { ntp_last_reply_ms = millis(); });
+        configTime(3600, 3600, net.ntp);  // MEZ/MESZ
     #endif
 
     MDNS.begin(WiFi.getHostname());
 
-    esp_updater.setup(&web_server);
+    if (ADMIN_PASSWORD[0]) {
+        esp_updater.setup(&web_server, "/update", admin_user, ADMIN_PASSWORD);
+    }
+    else {
+        esp_updater.setup(&web_server);
+    }
     setup_webserver();
 
-    mqtt.setServer(MQTT_SERVER, MQTT_PORT);
+    mqtt.setServer(net.mqttHost, net.mqttPort);   // resolved again on every connect
     mqtt.setCallback(mqtt_callback);
 
 #if defined(ESP8266)
@@ -1951,6 +2144,9 @@ void loop() {
 
     handle_load_button(handle_load_led());
     web_server.handleClient();
+    if (should_reboot && (int32_t)(millis() - reboot_at) >= 0) {
+        ESP.restart();
+    }
     handle_mqtt(have_time);
     handle_wifi();
 }
