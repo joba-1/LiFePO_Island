@@ -110,7 +110,7 @@ if ≥ 8 characters), otherwise the host name.
 
 ## Home Assistant migration (YAML → MQTT discovery)
 
-**Done 2026-10-13** (stamp `20261013-204404`; the InfluxDB rescale, step 6, not yet). Once only, when the island first runs firmware ≥ 4.2. Background and the
+**Done 2026-10-13** (stamp `20261013-204404`; InfluxDB rescale, step 6, done the same evening: 24,453,698 points in 40 s). Once only, when the island first runs firmware ≥ 4.2. Background and the
 entity table: [spec-homeassistant.md](spec-homeassistant.md). The tool is
 `tools/ha_migrate.py` (job6, uses `ssh qnap`).
 
