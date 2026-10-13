@@ -78,7 +78,7 @@ footer a { color: inherit; }
   <img src="/logo.svg" alt="">
   <div>
     <h1>LiFePO_Island</h1>
-    <div class="sub"><span id="host">–</span> · v<span id="version">–</span> · <span id="poll">connecting…</span></div>
+    <div class="sub"><span id="host">–</span> · v<span id="version">–</span> <span id="commit" class="nowrap"></span> · <span id="poll">connecting…</span></div>
   </div>
   <div id="dot" title="data state"></div>
 </header>
@@ -204,7 +204,7 @@ function message(text, bad) {
 }
 
 function render(d) {
-  set("host", d.host); set("version", d.version);
+  set("host", d.host); set("version", d.version); set("commit", d.commit ? "(" + d.commit + ")" : "");
   const c = d.charger, b = d.bms, l = d.link;
 
   // battery (BMS)
@@ -270,8 +270,8 @@ function render(d) {
   } else {
     b.tempsC.forEach((t, i) => {
       const row = document.createElement("div"); row.className = "row";
-      const k = document.createElement("span"); k.textContent = "BMS probe " + (i + 1);
-      k.title = "Temperature probe " + (i + 1) + " of the BMS (thermistor on a cable)";
+      const k = document.createElement("span"); k.textContent = (b.tempNames && b.tempNames[i]) || "BMS probe " + (i + 1);
+      k.title = "Temperature probe " + (i + 1) + " of the BMS";
       const v = document.createElement("span"); v.textContent = t.toFixed(1) + " °C";
       row.append(k, v); temps.append(row);
     });

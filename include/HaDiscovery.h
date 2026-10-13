@@ -15,6 +15,7 @@
 #include <string.h>
 
 #include "JsonWriter.h"
+#include "NameList.h"
 
 namespace HaDiscovery {
 
@@ -28,6 +29,7 @@ struct Context {
     const char* node;      ///< node / device id, e.g. "lifepo_island_1"
     const char* devName;   ///< device name, e.g. "LiFePO_Island 1"
     const char* version;   ///< firmware version
+    const char* ntcNames;  ///< "BMS board,Battery box": names of the BMS probes, or nullptr
 };
 
 struct Entity {
@@ -130,6 +132,10 @@ inline bool build(const Context& c, size_t index, uint8_t cells, uint8_t ntcs,
     char key[24], name[40], tpl[128], uid[64], stat[32];
     snprintf(key, sizeof(key), e->key, n);
     snprintf(name, sizeof(name), e->name, n);
+    char probe[24];
+    if (e == &NTC && NameList::nth(c.ntcNames, n - 1, probe, sizeof(probe))) {
+        snprintf(name, sizeof(name), "%s temperature", probe);   // "Battery box temperature"
+    }
     if (e->tpl) snprintf(tpl, sizeof(tpl), e->tpl, n - 1);
     snprintf(uid, sizeof(uid), "%s_%s", c.node, key);
     snprintf(stat, sizeof(stat), "~/%s", e->topic);

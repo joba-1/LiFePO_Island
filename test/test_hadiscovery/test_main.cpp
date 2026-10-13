@@ -8,11 +8,13 @@ using namespace HaDiscovery;
 void setUp() {}
 void tearDown() {}
 
-static const Context CTX = { "homeassistant", "LiFePO_Island/1", "lifepo_island_1", "LiFePO_Island 1", "4.2.0" };
+static const Context CTX = { "homeassistant", "LiFePO_Island/1", "lifepo_island_1", "LiFePO_Island 1", "4.2.0",
+                             "BMS board,Battery box" };
 
 // worst case for the size check: longest plausible names everywhere
 static const Context BIG = { "homeassistant_bench", "LiFePO_Island/99", "lifepo_island_99",
-                             "LiFePO_Island 99", "10.20.300-rc1" };
+                             "LiFePO_Island 99", "10.20.300-rc1",
+                             "a probe name of 23 chrs,b,c,d,e,f,g,h" };
 
 static bool find(size_t i, uint8_t cells, uint8_t ntcs, char* topic, char* payload) {
     return build(CTX, i, cells, ntcs, topic, 128, payload, 600);
@@ -75,7 +77,8 @@ void test_cells_and_ntcs_indexed() {
     TEST_ASSERT_EQUAL_STRING("homeassistant/sensor/lifepo_island_1/bms_temp_1/config", t);
     TEST_ASSERT_NOT_NULL(strstr(p, "temperatures[0]/10"));
     TEST_ASSERT_TRUE(find(FIXED_COUNT + 5, 4, 2, t, p));
-    TEST_ASSERT_NOT_NULL(strstr(p, "\"name\":\"BMS temperature 2\""));
+    TEST_ASSERT_NOT_NULL(strstr(p, "\"name\":\"Battery box temperature\""));
+    TEST_ASSERT_NOT_NULL(strstr(p, "\"uniq_id\":\"lifepo_island_1_bms_temp_2\""));   // id unchanged
 }
 
 void test_device_info_only_in_first() {

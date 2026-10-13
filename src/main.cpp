@@ -14,6 +14,10 @@ Specification: docs/spec.md (and docs/spec-*.md)
 
 #include <Arduino.h>
 
+#ifndef GIT_COMMIT
+#define GIT_COMMIT "unknown"
+#endif
+
 // Pure logic, unit tested natively (pio test -e native). Included before the
 // device libraries: esmart3.h/jbdbms.h leave #pragma pack(2) active.
 #include "Faults.h"
@@ -1169,6 +1173,7 @@ void fill_live(LiveJson::Live &d) {
     uint32_t now = millis();
     snprintf(d.host, sizeof(d.host), "%s", WiFi.getHostname());
     snprintf(d.version, sizeof(d.version), "%s", VERSION);
+    snprintf(d.commit, sizeof(d.commit), "%s", GIT_COMMIT);
     d.uptimeS = now / 1000;
     d.timeValid = time_valid();
     if (d.timeValid) {
@@ -1212,6 +1217,7 @@ void fill_live(LiveJson::Live &d) {
         b.tempsDeciC[i] = JbdBms::deciCelsius(jbdStatus.temperatures[i]);
     }
     b.faults = jbdStatus.fault;
+    b.ntcNames = NTC_NAMES;
 
     LiveJson::Link &l = d.link;
     l.rssi = WiFi.RSSI();
@@ -1311,7 +1317,7 @@ String netstatus_json() {
     bool synced = now > 1582230020;
     char buf[1200];
     snprintf(buf, sizeof(buf),
-        "{\"firmware\":{\"name\":\"" PROGNAME "\",\"version\":\"" VERSION "\",\"built\":\"" __DATE__ " " __TIME__ "\"},"
+        "{\"firmware\":{\"name\":\"" PROGNAME "\",\"version\":\"" VERSION "\",\"commit\":\"" GIT_COMMIT "\",\"built\":\"" __DATE__ " " __TIME__ "\"},"
         "\"device\":{\"hostname\":%s,\"ip\":\"%s\",\"mac\":\"%s\",\"ssid\":%s,\"rssi\":%d,\"uptimeS\":%lu,\"adminLock\":%s},"
         "\"configSource\":\"%s\","
         "\"resources\":{"
@@ -2098,7 +2104,7 @@ void handle_ha_discovery() {
         char *dash = strrchr(dev_name, '-');
         if (dash) *dash = ' ';
     }
-    const HaDiscovery::Context ctx = { HA_DISCOVERY_PREFIX, MQTT_TOPIC, node, dev_name, VERSION };
+    const HaDiscovery::Context ctx = { HA_DISCOVERY_PREFIX, MQTT_TOPIC, node, dev_name, VERSION, NTC_NAMES };
     static char topic[128], payload[HaDiscovery::MAX_MESSAGE];
     if (HaDiscovery::build(ctx, ha_next, ha_cells, ha_ntcs, topic, sizeof(topic), payload, sizeof(payload))) {
         if (!mqtt.publish(topic, payload, true)) {

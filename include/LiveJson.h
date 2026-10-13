@@ -16,6 +16,7 @@
 
 #include "Faults.h"
 #include "JsonWriter.h"
+#include "NameList.h"
 
 namespace LiveJson {
 
@@ -49,6 +50,7 @@ struct Bms {
     uint32_t balance = 0;       ///< bit n: cell n+1 balancing
     uint8_t  ntcs = 0;
     int16_t  tempsDeciC[8] = {0};
+    const char* ntcNames = nullptr;  ///< "BMS board,Battery box" (build flag NTC_NAMES)
     uint16_t faults = 0;
 };
 
@@ -64,6 +66,7 @@ struct Link {
 struct Live {
     char     host[33] = "";
     char     version[16] = "";
+    char     commit[24] = "";   ///< git commit of the build
     uint32_t uptimeS = 0;
     char     time[20] = "";     ///< local "YYYY-MM-DDTHH:MM:SS"
     bool     timeValid = false;
@@ -120,7 +123,7 @@ inline void writeBms(JsonWriter& w, const Bms& b) {
     if (!b.seen) {
         w.null();
         static const char* const keys[] = { "id", "V", "A", "W", "socPct", "remainAh", "fullAh", "remainWh", "fullWh",
-            "cycles", "chargeFet", "dischargeFet", "cellsMv", "balancing", "tempsC", "faults" };
+            "cycles", "chargeFet", "dischargeFet", "cellsMv", "balancing", "tempsC", "tempNames", "faults" };
         for (const char* k : keys) { w.key(k); w.null(); }
         w.close('}');
         return;
@@ -150,6 +153,13 @@ inline void writeBms(JsonWriter& w, const Bms& b) {
     w.key("tempsC");    w.open('[');
     for (uint8_t i = 0; i < ntcs; i++) w.fixed(b.tempsDeciC[i], 1);
     w.close(']');
+    w.key("tempNames"); w.open('[');
+    for (uint8_t i = 0; i < ntcs; i++) {
+        char name[24];
+        if (!NameList::nth(b.ntcNames, i, name, sizeof(name))) snprintf(name, sizeof(name), "BMS probe %u", i + 1);
+        w.string(name);
+    }
+    w.close(']');
     w.key("faults");    faultList(w, Faults::BMS, Faults::BMS_BITS, b.faults);
     w.close('}');
 }
@@ -164,6 +174,7 @@ inline bool write(char* out, size_t cap, const Live& d) {
     w.open('{');
     w.key("host");      w.string(d.host);
     w.key("version");   w.string(d.version);
+    w.key("commit");    w.string(d.commit);
     w.key("uptimeS");   w.integer((long)d.uptimeS);
     w.key("time");      if (d.timeValid) w.string(d.time); else w.null();
     w.key("timeValid"); w.boolean(d.timeValid);

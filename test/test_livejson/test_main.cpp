@@ -10,6 +10,7 @@ static LiveJson::Live sample() {
     LiveJson::Live d;
     strcpy(d.host, "lifepo_island-9");
     strcpy(d.version, "4.2.0");
+    strcpy(d.commit, "df405f1");
     d.uptimeS = 77;
     d.timeValid = true;
     strcpy(d.time, "2026-10-13T18:00:00");
@@ -43,6 +44,7 @@ static LiveJson::Live sample() {
     d.bms.balance = 0x2;
     d.bms.ntcs = 2;
     d.bms.tempsDeciC[0] = 145; d.bms.tempsDeciC[1] = -5;
+    d.bms.ntcNames = "BMS board";   // only one name: the second probe gets the default
     d.link.rssi = -83;
     strcpy(d.link.ip, "192.168.5.222");
     d.link.influxCode = 204;
@@ -57,7 +59,7 @@ void test_full_document() {
     char out[2048];
     TEST_ASSERT_TRUE(LiveJson::write(out, sizeof(out), sample()));
     TEST_ASSERT_EQUAL_STRING(
-        "{\"host\":\"lifepo_island-9\",\"version\":\"4.2.0\",\"uptimeS\":77,"
+        "{\"host\":\"lifepo_island-9\",\"version\":\"4.2.0\",\"commit\":\"df405f1\",\"uptimeS\":77,"
         "\"time\":\"2026-10-13T18:00:00\",\"timeValid\":true,\"msg\":\"Load \\\"on\\\"\","
         "\"charger\":{\"ageS\":1,\"model\":\"eSmart4\",\"serial\":\"62060003\",\"mode\":\"MPPT\","
         "\"pvV\":23.2,\"batV\":13.4,\"chgW\":41,\"loadW\":0,\"load\":true,\"batTempC\":13,"
@@ -65,7 +67,7 @@ void test_full_document() {
         "\"bms\":{\"ageS\":2,\"id\":\"JBD\",\"V\":13.35,\"A\":-1.91,\"W\":-25.4,\"socPct\":81,"
         "\"remainAh\":220.46,\"fullAh\":272.00,\"remainWh\":2821,\"fullWh\":3481,\"cycles\":123,\"chargeFet\":true,\"dischargeFet\":true,"
         "\"cellsMv\":[3342,3338,3339,3338],\"balancing\":[false,true,false,false],"
-        "\"tempsC\":[14.5,-0.5],\"faults\":[]},"
+        "\"tempsC\":[14.5,-0.5],\"tempNames\":[\"BMS board\",\"BMS probe 2\"],\"faults\":[]},"
         "\"link\":{\"rssi\":-83,\"ip\":\"192.168.5.222\",\"influx\":{\"code\":204,\"okAgeS\":3,"
         "\"queued\":12,\"dropped\":0},\"mqtt\":true,\"ntp\":true}}",
         out);

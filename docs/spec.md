@@ -99,6 +99,20 @@ version`. JSON carries the version as a string since 4.2 (`"Version":"4.2.0"`);
 before it was an unquoted number (`4.1`), which a three-part version would
 have turned into invalid JSON.
 
+### Rule: every deployed build gets its own version
+
+A change that reaches a device bumps `[program] version` (patch: fix, minor:
+feature) and is committed **before** the build; the release commit is tagged
+`v<version>`. `git_version.py` compiles the commit (`GIT_COMMIT`, with
+`-dirty` for uncommitted changes) into the firmware; `/api/netstatus`
+(`firmware.commit`), `/api/live` (`commit`) and the page header show it.
+
+| Version | Date | Content |
+|---|---|---|
+| 4.3.0 | 2026-10-13 | probe names (`custom_ntc_names`), energy in Wh, cells in V, labels/tooltips, git commit in the firmware |
+| 4.2.0 | 2026-10-13 | live page, batched InfluxDB, HA discovery, fixes from the review; later builds `1f7bb06` (DHCP, OTA Origin) and `df405f1` (page details) were deployed **still as 4.2.0** — the reason for this rule |
+| 4.1 | 2026-09-23 | runtime host config, `/api/netstatus`, admin login |
+
 ## Build environments
 
 | Env | Board | Use |
