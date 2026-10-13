@@ -12,7 +12,8 @@
 # password is used by upload_script.py for OTA uploads.
 #
 # The bench Wi-Fi lets a freshly erased test board join the network without
-# going through the WiFiManager portal.
+# going through the WiFiManager portal. BENCH_WIFI_SSID / BENCH_WIFI_PASS in the
+# environment override secrets.ini.
 import configparser
 import os
 
@@ -35,7 +36,9 @@ else:
     print("pio_secrets.py: no admin_password in secrets.ini - building WITHOUT admin lock")
 
 if env.GetProjectOption("custom_bench_wifi", "no") == "yes":  # noqa: F821
-    ssid, wifi_pw = secret("bench_wifi_ssid"), secret("bench_wifi_password")
+    # environment wins (e.g. to put the bench into the island's network for diagnosis)
+    ssid = os.environ.get("BENCH_WIFI_SSID") or secret("bench_wifi_ssid")
+    wifi_pw = os.environ.get("BENCH_WIFI_PASS") if os.environ.get("BENCH_WIFI_SSID") else secret("bench_wifi_password")
     if ssid:
         env.Append(CPPDEFINES=[  # noqa: F821
             ("BENCH_WIFI_SSID", env.StringifyMacro(ssid)),  # noqa: F821

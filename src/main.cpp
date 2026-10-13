@@ -1225,9 +1225,14 @@ void fill_live(LiveJson::Live &d) {
 }
 
 
-// Read and write ip config
+// Read and write the static ip config (ip, gw, mask, dns0, dns1).
+// Only an address set explicitly via /ip is stored (4.2). Up to 4.1 every
+// DHCP answer was stored and used as static config from the next boot on;
+// behind nat2 that hid the island from nat2's DHCP leases, and nat2 forwards
+// ports by MAC via those leases. Entries with the old magic are ignored, so a
+// device updated from 4.1 uses DHCP again. ip[0] == 0 means DHCP.
 bool ip_config(uint32_t *ip, int num_ip, bool write = false) {
-    const uint32_t magic = 0xdeadbeef;
+    const uint32_t magic = 0x1bd5a7c1;   // 4.1 and older: 0xdeadbeef
     size_t got_bytes = 0;
     size_t want_bytes = sizeof(*ip) * num_ip;
     if (*ip != 0xffffffff && EEPROM.begin(want_bytes + sizeof(uint32_t))) {
@@ -1520,6 +1525,35 @@ void setup_webserver() {
     });
 
 #ifdef SIMULATE
+    // Test builds only: GET /api/probe?url=http://192.168.x.y/path[&post=<form>][&auth=<base64>] - fetch a URL
+    // from the bench's network and return status + body (diagnosis from inside
+    // a NAT network such as the island's). Private 192.168.* targets only.
+    web_server.on("/api/probe", HTTP_GET, []() {
+        String url = web_server.arg("url");
+        if (!url.startsWith("http://192.168.")) {
+            return send_json(400, "{\"error\":\"url must start with http://192.168.\"}");
+        }
+        WiFiClient client;
+        HTTPClient http;
+        http.setConnectTimeout(3000);
+        http.setTimeout(5000);
+        http.begin(client, url);
+        if (web_server.hasArg("auth")) http.setAuthorization(web_server.arg("auth").c_str());  // base64 user:pw
+        int code;
+        if (web_server.hasArg("post")) {   // form body, e.g. post=ip%3D0.0.0.0
+            http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+            code = http.POST(web_server.arg("post"));
+        }
+        else {
+            code = http.GET();
+        }
+        String body = code > 0 ? http.getString() : String();
+        http.end();
+        web_server.sendHeader("Cache-Control", "no-store");
+        web_server.sendHeader("X-Probe-Status", String(code));
+        web_server.send(200, "text/plain", body.length() ? body : String("probe status ") + code);
+    });
+
     // Test builds only: GET /api/sim?charger=0|1&bms=0|1&chargerFaults=N&bmsFaults=N
     web_server.on("/api/sim", HTTP_GET, []() {
         if (web_server.hasArg("charger")) simControl.chargerOnline = web_server.arg("charger") != "0";
@@ -1691,7 +1725,8 @@ void setup_webserver() {
         if (changeIp) {
             delay(200);  // let the send finish
             bool ok = false;
-            if (ip != INADDR_NONE) {  // static
+            bool changeToStatic = ip != INADDR_NONE;
+            if (changeToStatic) {  // static
                 ok = WiFi.config(ip, WiFi.gatewayIP(), WiFi.subnetMask(), WiFi.dnsIP(0), WiFi.dnsIP(1));
             }
             else {  // dynamic
@@ -1704,7 +1739,12 @@ void setup_webserver() {
                 WiFi.subnetMask().toString().c_str(), WiFi.dnsIP(0).toString().c_str(), WiFi.dnsIP(1).toString().c_str());
             slog(msg, LOG_NOTICE);
             if (ok) {
-                uint32_t ip[5] = { (uint32_t)WiFi.localIP(), (uint32_t)WiFi.gatewayIP(), (uint32_t)WiFi.subnetMask(), (uint32_t)WiFi.dnsIP(0), (uint32_t)WiFi.dnsIP(1) };
+                // static: remember it; DHCP: clear the stored config (ip[0] = 0)
+                uint32_t ip[5] = {0};
+                if (changeToStatic) {
+                    uint32_t cur[5] = { (uint32_t)WiFi.localIP(), (uint32_t)WiFi.gatewayIP(), (uint32_t)WiFi.subnetMask(), (uint32_t)WiFi.dnsIP(0), (uint32_t)WiFi.dnsIP(1) };
+                    memcpy(ip, cur, sizeof(ip));
+                }
                 if (ip_config(ip, 5, true)) {
                     slog("Wrote changed IP config");
                 }
@@ -2206,15 +2246,6 @@ void setup() {
         while (true)
             ;
     }
-    uint32_t ip2[5] = { (uint32_t)WiFi.localIP(), (uint32_t)WiFi.gatewayIP(), (uint32_t)WiFi.subnetMask(), (uint32_t)WiFi.dnsIP(0), (uint32_t)WiFi.dnsIP(1) };
-    if (memcmp(ip, ip2, sizeof(ip))) {
-        if (ip_config(ip2, 5, true)) {
-            slog("Wrote IP config");
-        }
-        else {
-            slog("Write IP config failed");
-        }
-    }
 
     if (HEALTH_LED_PIN >= 0) digitalWrite(HEALTH_LED_PIN, HEALTH_LED_ON);
     char msg[80];
@@ -2267,7 +2298,8 @@ void setup() {
     // init your non ESP serial port here
 #endif
 
-    if (LOAD_BUTTON_PIN >= 0) pinMode(LOAD_BUTTON_PIN, INPUT_PULLUP);  // to toggle load status
+    if (LOAD_BUTTON_PIN >= 34) pinMode(LOAD_BUTTON_PIN, INPUT);  // input-only pins: external pull-up
+    else if (LOAD_BUTTON_PIN >= 0) pinMode(LOAD_BUTTON_PIN, INPUT_PULLUP);  // to toggle load status
     if (LOAD_LED_PIN >= 0) {
         pinMode(LOAD_LED_PIN, OUTPUT);  // to show load status
         digitalWrite(LOAD_LED_PIN, LOAD_LED_OFF);

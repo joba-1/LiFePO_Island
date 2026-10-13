@@ -117,5 +117,7 @@ InfluxDB series (tagged by entity ID) continue.
 the firmware keeps one uniform ID scheme for every instance; the old names
 live only in the one-time migration script.
 
+Executed 2026-10-13: all 12 entities adopted (unchanged entity IDs, one device with 26 entities).
+
 Procedure, tooling and rollback: [admin.md](admin.md), section "Home
 Assistant migration"; script `tools/ha_migrate.py`.

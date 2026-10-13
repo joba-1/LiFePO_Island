@@ -25,6 +25,13 @@ pio run -e mhetesp32minikit_ser -t upload  # island via USB (on site)
 pio run -e atom_echo -t upload             # test bench
 ```
 
+OTA with the admin password needs an `Origin: http://<host>` header: the
+ESP32 `HTTPUpdateServer` (core 3.x) checks it against `Host` as CSRF
+protection and answers 401 without it, even with a correct login.
+`upload_script.py` sends it (fixed 2026-10-13; protected OTA had never worked
+before). An upload that is cut off can leave the web server hanging until the
+next reset.
+
 The island was built with `mhetesp32minikit_ota` for 4.1 (`default_envs` in
 `platformio.ini` still names `esp32cam_ota`; pass `-e` explicitly). The OTA
 upload goes to `[ota] host` (`nat2:8080`); 4.1 and older used the host name,
@@ -58,6 +65,37 @@ curl -u admin:$PW -X POST http://nat2:8080/api/netconfig -d influxHost=influx
    are dropped (`dropped`).
 4. Syslog: `{host="lifepo_island-1"}` in Loki (Grafana Explore).
 
+### nat2 after a reboot or power loss (found 2026-10-13)
+
+nat2 (Tasmota 13.2.0.2 range extender) has two traps:
+
+* After a cold boot it reports `RgxNAPT ON` but forwards **nothing**, neither
+  out (no data from the island) nor in (port forwards). Toggling
+  `RgxNAPT OFF` / `RgxNAPT ON` after the Wi-Fi connect fixes it.
+* `RgxPort tcp,8080,<MAC>,80` resolves the MAC through nat2's **DHCP leases**
+  when the command runs (MQTT `stat/nat2/RESULT` shows the target). A client
+  with a static IP, or one that connects later, maps to `0.0.0.0`. Up to 4.1
+  the island stored its first DHCP answer as static config, so after a power
+  loss of nat2 it was not in the lease table any more. 4.2 uses DHCP unless an
+  address is set explicitly via `/ip`.
+
+`Rule1` on nat2 (enabled 2026-10-13; before, a rule with the IP form existed
+but was off, and the forward had once been set by hand):
+
+```
+on Wifi#Connected do backlog delay 50; RgxNAPT OFF; delay 10; RgxNAPT ON endon
+on Time#Minute|5 do RgxPort tcp,8080,4CEBD677F760,80 endon
+```
+
+Check: `curl 'http://nat2/cm?cmnd=RgxClients'` (the island `4CEBD677F760`
+needs an IP there) and `mosquitto_sub -h mqtt -t stat/nat2/RESULT` while
+sending `RgxPort ...`.
+
+Diagnosis from inside nat2's network: build the bench into it
+(`BENCH_WIFI_SSID=job.nat2.ssid BENCH_WIFI_PASS=... pio run -e atom_echo -t upload`),
+forward a port to its MAC, and use its `GET /api/probe?url=http://192.168.5.x/...`
+(simulator builds only) to read any device there.
+
 ### After a long WLAN outage
 
 Nothing to do: the island reconnects, restarts after ~10 min of failed
@@ -72,7 +110,7 @@ if ≥ 8 characters), otherwise the host name.
 
 ## Home Assistant migration (YAML → MQTT discovery)
 
-Once only, when the island first runs firmware ≥ 4.2. Background and the
+**Done 2026-10-13** (stamp `20261013-204404`; the InfluxDB rescale, step 6, not yet). Once only, when the island first runs firmware ≥ 4.2. Background and the
 entity table: [spec-homeassistant.md](spec-homeassistant.md). The tool is
 `tools/ha_migrate.py` (job6, uses `ssh qnap`).
 

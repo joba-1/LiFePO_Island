@@ -101,4 +101,4 @@ power-cycle nat2 and confirm the island reconnects by itself within ~15 min.
 
 | Date | Version | Unit | Bench | Island | Notes |
 |---|---|---|---|---|---|
-| 2026-10-13 | 4.2.0 | 44/44 | 63/63 (`check_device.py`, Atom Echo) | not reachable (nat2 without power) | HA migration: dry run ok, not executed |
+| 2026-10-13 | 4.2.0 | 44/44 | 63/63 (`check_device.py`, Atom Echo) | 47/47 read-only, OTA via nat2:8080 | HA migration done: 12 entities adopted, 134,813 recorder states rescaled |

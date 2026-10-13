@@ -24,6 +24,7 @@ Backups: <file>.bak-ha-migrate-<STAMP> next to each changed file.
 import argparse
 import datetime
 import json
+import ssl
 import shlex
 import subprocess
 import sys
@@ -39,7 +40,7 @@ CONFIG = "/share/Docker/homeassistant/config"
 DOCKER = "/share/CACHEDEV1_DATA/.qpkg/container-station/bin/docker"
 CONTAINER = "home-assistant-2026.10.0"
 IMAGE = "homeassistant/home-assistant:2026.10.0"
-HA_URL = "http://qnap:8123/manifest.json"
+HA_URL = "https://qnap:8123/manifest.json"   # HA serves TLS on 8123 (own certificate)
 INFLUX = "http://influx:8086"
 
 REGISTRY = CONFIG + "/.storage/core.entity_registry"
@@ -258,7 +259,10 @@ def start_ha():
     ssh(f"{DOCKER} start {CONTAINER}")
     for _ in range(90):
         try:
-            with urllib.request.urlopen(HA_URL, timeout=5) as r:
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False          # certificate is for the public name
+            ctx.verify_mode = ssl.CERT_NONE
+            with urllib.request.urlopen(HA_URL, timeout=5, context=ctx) as r:
                 if r.status == 200:
                     print("Home Assistant answers again")
                     return
@@ -356,6 +360,7 @@ def cmd_rescale_influx(args):
 
 
 def main():
+    sys.stdout.reconfigure(line_buffering=True)   # progress visible when piped
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd")
     p = sub.add_parser("plan")

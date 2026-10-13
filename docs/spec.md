@@ -77,6 +77,11 @@ every ~13 min into the charger's configuration memory, for no benefit.
 * The config portal is protected with the admin password when one of ≥ 8
   characters is compiled in (WPA2 minimum); otherwise with the host name, as
   before 4.2.
+* IP: DHCP unless set explicitly via `/ip` (stored in EEPROM with a new
+  magic). Up to 4.1 the first DHCP answer was stored and used as static config
+  forever; nat2 forwards ports by MAC via its DHCP leases, so after a nat2
+  power loss the island could not be reached (see admin.md, "nat2 after a
+  reboot"). Old entries are ignored after the update.
 * Hosts are resolved on every use (HTTP POST, MQTT connect, each syslog
   packet), so a moved alias is followed without a reboot.
 
