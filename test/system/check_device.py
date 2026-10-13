@@ -184,7 +184,8 @@ def mqtt_pub(broker, topic, payload):
 
 def test_mqtt(base, broker, topic, read_only):
     check("MQTT LWT retained 'Online'", mqtt_sub(broker, topic + "/status/LWT") == ["Online"])
-    check("MQTT json/ChgSts published", len(mqtt_sub(broker, topic + "/json/ChgSts", 1, 15)) == 1)
+    # items are published on change only; at night the charger can sit still for minutes
+    check("MQTT json/* published", len(mqtt_sub(broker, topic + "/json/#", 1, 20)) == 1)
     if read_only:
         return
     http(base, "/api/load", {"state": "off"})
@@ -230,10 +231,13 @@ def influx_query(server, db, q):
 
 def test_influx(base, server, db):
     check("influx batch posted ok", wait_for(lambda: 200 <= live(base)["link"]["influx"]["code"] < 300, 20))
-    s = influx_query(server, db, "SELECT count(BatVolt) FROM ChgSts WHERE time > now() - 2m")
-    n = s[0]["values"][0][1] if s else 0
-    check("ChgSts points arrive in InfluxDB", n > 10, f"{n} points in 2 min")
-    s = influx_query(server, db, "SELECT BatVolt FROM ChgSts WHERE time > now() - 2m")
+    # on change only: count all items (Wifi alone comes every ~10 s)
+    n = 0
+    for meas, field in (("ChgSts", "BatVolt"), ("Status", "voltage"), ("Cells", "voltage1"), ("Wifi", "RSSI")):
+        s = influx_query(server, db, f"SELECT count({field}) FROM {meas} WHERE time > now() - 2m")
+        n += s[0]["values"][0][1] if s else 0
+    check("points arrive in InfluxDB", n > 10, f"{n} points in 2 min")
+    s = influx_query(server, db, "SELECT RSSI FROM Wifi WHERE time > now() - 2m")
     times = [v[0] for v in s[0]["values"]] if s else []
     check("points carry ms timestamps", any(t % 1000 for t in times), times[:3])
 
