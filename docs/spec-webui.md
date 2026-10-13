@@ -26,10 +26,11 @@ Layout, top to bottom:
 2. Message line for results of actions and for faults.
 3. Tiles:
    * **Battery** (BMS): SoC % with bar, V, A, W (+ charging, − discharging),
-     remaining/full Ah, cycles.
+     energy left/full in Wh (Ah × 3.2 V nominal per cell × cells), cycles.
    * **Solar** (charger): PV V, charge W, charge mode, charger SoC estimate.
    * **Load**: load W, state on/off, buttons ON / OFF.
-   * **Cells**: one bar per cell (mV), min/max/spread, balancing marks.
+   * **Cells**: one bar per cell in V (3 decimals), min/max in V, spread in mV,
+     a "balancing" badge per cell with a one-line explanation.
    * **Temperatures**: BMS NTCs, charger battery and internal sensor.
    * **Protection**: BMS charge/discharge MOSFET switches (with confirm),
      active faults as text, or "none"; the charger's nightly "PV low voltage" bit is
@@ -60,7 +61,7 @@ time of the last good poll.
   "bms": {
     "ageS": 2, "id": "JBD-SP04S010A-L4S-35A-B",
     "V": 13.35, "A": 3.04, "W": 40.6, "socPct": 81,
-    "remainAh": 220.46, "fullAh": 272.0, "cycles": 123,
+    "remainAh": 220.46, "fullAh": 272.0, "remainWh": 2821, "fullWh": 3481, "cycles": 123,
     "chargeFet": true, "dischargeFet": true,
     "cellsMv": [3342, 3338, 3339, 3338], "balancing": [false, false, false, false],
     "tempsC": [14.5, 12.4], "faults": []
@@ -77,6 +78,9 @@ time of the last good poll.
   values of that block are then `null` too.
 * `msg` is a one-shot message (result of the last action, as the old page
   showed it); it is cleared once delivered.
+* Labels carry tooltips (`title`) that say where a value comes from: BMS
+  vs. charger voltage, counted SoC vs. the charger's voltage-based estimate,
+  which temperature probe.
 * Units are converted on the device (V, A, W, °C, Ah) so consumers need no
   knowledge of the raw scaling (charger 0.1 V; BMS 10 mV, 10 mA, 10 mAh,
   0.1 K).

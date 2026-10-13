@@ -63,7 +63,7 @@ void test_full_document() {
         "\"pvV\":23.2,\"batV\":13.4,\"chgW\":41,\"loadW\":0,\"load\":true,\"batTempC\":13,"
         "\"innerTempC\":-2,\"capPct\":97,\"faults\":[\"PV low voltage\"]},"
         "\"bms\":{\"ageS\":2,\"id\":\"JBD\",\"V\":13.35,\"A\":-1.91,\"W\":-25.4,\"socPct\":81,"
-        "\"remainAh\":220.46,\"fullAh\":272.00,\"cycles\":123,\"chargeFet\":true,\"dischargeFet\":true,"
+        "\"remainAh\":220.46,\"fullAh\":272.00,\"remainWh\":2821,\"fullWh\":3481,\"cycles\":123,\"chargeFet\":true,\"dischargeFet\":true,"
         "\"cellsMv\":[3342,3338,3339,3338],\"balancing\":[false,true,false,false],"
         "\"tempsC\":[14.5,-0.5],\"faults\":[]},"
         "\"link\":{\"rssi\":-83,\"ip\":\"192.168.5.222\",\"influx\":{\"code\":204,\"okAgeS\":3,"

@@ -18,11 +18,11 @@ Each tile shows how old its data is ("live", "45 s old", "no data").
 
 | Tile | Shows |
 |---|---|
-| Battery | state of charge from the BMS, voltage, current and power (+ charging, − discharging), remaining/full Ah, cycles |
-| Solar | charge power, PV voltage, battery voltage as the charger sees it, charge mode, the charger's own (rough) SoC estimate |
+| Battery | state of charge counted by the BMS (the reliable one), voltage measured by the BMS at the cells, current and power (+ charging, − discharging), energy left/full in Wh (Ah × 3.2 V × cells), cycles |
+| Solar | charge power, PV voltage, the battery voltage as the charger measures it at its terminals (0.1 V steps, a bit lower than the BMS value because of the cables), charge mode, the charger's SoC estimate from the voltage (rough: LiFePO4 voltage hardly changes between 20 and 90 %) |
 | Load | power drawn by the load output (the inverter) and whether it is on; **Load ON / OFF** |
-| Cells | voltage of every cell with a bar (2.8–3.6 V), min/max/spread; ⇄ marks a cell being balanced |
-| Temperatures | BMS sensors, charger battery and internal sensor |
+| Cells | voltage of every cell with a bar (2.8–3.6 V), min/max, spread in mV; "balancing" marks a cell from which the BMS bleeds a little charge so all cells end up equal (normal when full) |
+| Temperatures | the two BMS thermistor probes, the charger's battery temperature input and its internal (heatsink) temperature |
 | Protection | the BMS MOSFETs (switching the discharge MOSFET off asks first: it cuts the load from the battery) and the active faults as text |
 | Link | Wi-Fi signal, IP, InfluxDB result and queue, MQTT, time, uptime |
 

@@ -46,9 +46,12 @@ main { padding: 16px; max-width: 1100px; margin: 0 auto; }
 .meter { height: 10px; background: var(--bar); border-radius: 5px; overflow: hidden; margin: 6px 0 8px; }
 .meter > div { height: 100%; width: 0; background: var(--ok); transition: width .5s; }
 .cells { display: grid; gap: 6px; }
-.cell { display: grid; grid-template-columns: 22px 1fr 62px; align-items: center; gap: 8px; font-variant-numeric: tabular-nums; }
+.cell { display: grid; grid-template-columns: 18px 1fr 62px 70px; align-items: center; gap: 8px; font-variant-numeric: tabular-nums; }
 .cell .meter { margin: 0; }
-.cell .bal { color: var(--accent); }
+.cell .bal { justify-self: end; font-size: 11px; color: var(--accent); border: 1px solid var(--accent); border-radius: 4px; padding: 0 4px; margin-left: 4px; }
+.hint { color: var(--muted); font-size: 12px; margin-top: 6px; }
+[title] { cursor: help; }
+button[title], input[title] { cursor: pointer; }
 .pos { color: var(--ok); } .neg { color: var(--warn); }
 .state { font-weight: 600; } .state.on { color: var(--ok); } .state.off { color: var(--muted); }
 .btns { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
@@ -84,21 +87,21 @@ footer a { color: inherit; }
   <div class="grid">
     <section class="card">
       <h2>Battery <span class="age" id="bmsAge"></span></h2>
-      <div class="big"><span id="soc">–</span> %</div>
+      <div class="big" title="State of charge counted by the BMS (charge in and out, recalibrated when full) - the reliable value"><span id="soc">–</span> %</div>
       <div class="meter"><div id="socBar"></div></div>
-      <div class="row"><span>Voltage</span><span id="bmsV">–</span></div>
+      <div class="row"><span title="Measured by the BMS directly at the cells (10 mV resolution)">Voltage (BMS)</span><span id="bmsV">–</span></div>
       <div class="row"><span>Current</span><span id="bmsA">–</span></div>
       <div class="row"><span>Power</span><span id="bmsW">–</span></div>
-      <div class="row"><span>Remaining</span><span id="ah">–</span></div>
+      <div class="row"><span title="Remaining / full energy: BMS capacity in Ah × 3.2 V nominal per cell × cells">Energy left</span><span id="wh">–</span></div>
       <div class="row"><span>Cycles</span><span id="cycles">–</span></div>
     </section>
     <section class="card">
       <h2>Solar <span class="age" id="chgAge"></span></h2>
       <div class="big"><span id="chgW">–</span> W</div>
       <div class="row"><span>PV voltage</span><span id="pvV">–</span></div>
-      <div class="row"><span>Battery (charger)</span><span id="chgBatV">–</span></div>
+      <div class="row"><span title="The same battery, measured by the charger at its own terminals (0.1 V resolution, includes cable losses)">Battery voltage (charger)</span><span id="chgBatV">–</span></div>
       <div class="row"><span>Mode</span><span id="mode">–</span></div>
-      <div class="row"><span>Charger SoC estimate</span><span id="capPct">–</span></div>
+      <div class="row"><span title="The charger only estimates the charge from the voltage. LiFePO4 has a very flat voltage curve, so this is rough - use the BMS value">SoC estimate (charger)</span><span id="capPct">–</span></div>
       <div class="row"><span>Model</span><span id="model">–</span></div>
     </section>
     <section class="card">
@@ -113,13 +116,15 @@ footer a { color: inherit; }
     <section class="card">
       <h2>Cells <span class="age" id="cellsInfo"></span></h2>
       <div class="cells" id="cells"><span class="none">no data</span></div>
-      <div class="row" style="margin-top:6px"><span>Min/max/Δ</span><span id="spread" class="nowrap">–</span></div>
+      <div class="row" style="margin-top:6px"><span>Min / max</span><span id="spread" class="nowrap">–</span></div>
+      <div class="row"><span title="Difference between the highest and the lowest cell">Spread</span><span id="delta">–</span></div>
+      <div class="hint" id="balHint" hidden>balancing: the BMS bleeds a little charge from cells that are fuller than the others, so all end up equal. While it does, those cells read a few mV lower. Normal when full.</div>
     </section>
     <section class="card">
       <h2>Temperatures</h2>
       <div id="temps"><span class="none">no data</span></div>
-      <div class="row"><span>Charger: battery</span><span id="batTemp">–</span></div>
-      <div class="row"><span>Charger: internal</span><span id="innerTemp">–</span></div>
+      <div class="row"><span title="Battery temperature input of the charger">Charger: battery sensor</span><span id="batTemp">–</span></div>
+      <div class="row"><span title="Inside the charger (heatsink)">Charger: internal</span><span id="innerTemp">–</span></div>
     </section>
     <section class="card">
       <h2>Protection</h2>
@@ -212,7 +217,7 @@ function render(d) {
   set("bmsA", signed(b.A, "A", 2));
   set("bmsW", signed(b.W, "W", 1));
   $("bmsW").className = b.W > 0 ? "pos" : b.W < 0 ? "neg" : "";
-  set("ah", b.remainAh === null ? "–" : b.remainAh.toFixed(1) + " / " + b.fullAh.toFixed(0) + " Ah");
+  set("wh", b.remainWh === null ? "–" : b.remainWh + " / " + b.fullWh + " Wh");
   set("cycles", num(b.cycles));
 
   // solar (charger)
@@ -235,23 +240,26 @@ function render(d) {
   cells.replaceChildren();
   if (!b.cellsMv || !b.cellsMv.length) {
     const n = document.createElement("span"); n.className = "none"; n.textContent = "no data";
-    cells.append(n); set("spread", "–"); set("cellsInfo", "");
+    cells.append(n); set("spread", "–"); set("delta", "–"); $("balHint").hidden = true; set("cellsInfo", "");
   } else {
     const min = Math.min(...b.cellsMv), max = Math.max(...b.cellsMv);
     b.cellsMv.forEach((mv, i) => {
       const row = document.createElement("div"); row.className = "cell";
       const name = document.createElement("span"); name.textContent = i + 1;
-      if (b.balancing[i]) { name.className = "bal"; name.title = "balancing"; name.textContent += "⇄"; }
       const meter = document.createElement("div"); meter.className = "meter";
       const bar = document.createElement("div");
       bar.style.width = Math.max(0, Math.min(100, (mv - 2800) / 8)) + "%";   // 2.8 V .. 3.6 V
       bar.style.background = mv < 3000 || mv > 3600 ? "var(--bad)" : (mv === max && max - min > 30) ? "var(--warn)" : "var(--ok)";
       meter.append(bar);
-      const val = document.createElement("span"); val.textContent = mv + " mV";
-      row.append(name, meter, val); cells.append(row);
+      const val = document.createElement("span"); val.textContent = (mv / 1000).toFixed(3) + " V";
+      const bal = document.createElement("span");
+      if (b.balancing[i]) { bal.className = "bal"; bal.textContent = "balancing"; }
+      row.append(name, meter, val, bal); cells.append(row);
     });
-    set("spread", min + " / " + max + " / " + (max - min) + " mV");
-    set("cellsInfo", b.balancing.some(x => x) ? "balancing" : "");
+    set("spread", (min / 1000).toFixed(3) + " / " + (max / 1000).toFixed(3) + " V");
+    set("delta", (max - min) + " mV");
+    $("balHint").hidden = !b.balancing.some(x => x);
+    set("cellsInfo", "");
   }
 
   // temperatures
@@ -262,7 +270,8 @@ function render(d) {
   } else {
     b.tempsC.forEach((t, i) => {
       const row = document.createElement("div"); row.className = "row";
-      const k = document.createElement("span"); k.textContent = "BMS sensor " + (i + 1);
+      const k = document.createElement("span"); k.textContent = "BMS probe " + (i + 1);
+      k.title = "Temperature probe " + (i + 1) + " of the BMS (thermistor on a cable)";
       const v = document.createElement("span"); v.textContent = t.toFixed(1) + " °C";
       row.append(k, v); temps.append(row);
     });
@@ -288,8 +297,10 @@ function render(d) {
   set("rssi", l.rssi + " dBm");
   set("ip", l.ip);
   if (!ipEdited) $("ipField").value = l.ip;
-  const influxOk = l.influx.code >= 200 && l.influx.code < 300;
-  set("influx", (l.influx.code || "–") + (l.influx.okAgeS === null ? ", never ok" : ", ok " + ageText(l.influx.okAgeS)));
+  const influxWaiting = l.influx.code === 0;   // no write attempted since boot
+  const influxOk = influxWaiting || (l.influx.code >= 200 && l.influx.code < 300);
+  set("influx", influxWaiting ? "first write pending" :
+      l.influx.code + (l.influx.okAgeS === null ? ", never ok" : ", ok " + ageText(l.influx.okAgeS)));
   $("influx").className = influxOk ? "" : "neg";
   set("queue", l.influx.queued + " lines" + (l.influx.dropped ? ", " + l.influx.dropped + " dropped" : ""));
   set("mqtt", l.mqtt ? "connected" : "disconnected");

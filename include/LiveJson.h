@@ -19,6 +19,9 @@
 
 namespace LiveJson {
 
+/// LiFePO4 nominal cell voltage for Ah -> Wh (energy = Ah * cells * 3.2 V)
+static constexpr uint32_t NOMINAL_CELL_MV = 3200;
+
 struct Charger {
     bool     seen = false;      ///< answered at least once since boot
     uint32_t ageS = 0;          ///< seconds since the last good read
@@ -116,7 +119,7 @@ inline void writeBms(JsonWriter& w, const Bms& b) {
     w.key("ageS");
     if (!b.seen) {
         w.null();
-        static const char* const keys[] = { "id", "V", "A", "W", "socPct", "remainAh", "fullAh",
+        static const char* const keys[] = { "id", "V", "A", "W", "socPct", "remainAh", "fullAh", "remainWh", "fullWh",
             "cycles", "chargeFet", "dischargeFet", "cellsMv", "balancing", "tempsC", "faults" };
         for (const char* k : keys) { w.key(k); w.null(); }
         w.close('}');
@@ -130,6 +133,9 @@ inline void writeBms(JsonWriter& w, const Bms& b) {
     w.key("socPct");       w.integer(b.socPct);
     w.key("remainAh");     w.fixed(b.remainCentiAh, 2);
     w.key("fullAh");       w.fixed(b.fullCentiAh, 2);
+    // 10 mAh * mV = 10 uWh; / 100000 -> Wh
+    w.key("remainWh");     w.integer((long)((uint64_t)b.remainCentiAh * b.cells * NOMINAL_CELL_MV / 100000));
+    w.key("fullWh");       w.integer((long)((uint64_t)b.fullCentiAh * b.cells * NOMINAL_CELL_MV / 100000));
     w.key("cycles");       w.integer(b.cycles);
     w.key("chargeFet");    w.boolean(b.mosfets & 1);
     w.key("dischargeFet"); w.boolean(b.mosfets & 2);
