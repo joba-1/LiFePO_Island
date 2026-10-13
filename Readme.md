@@ -102,6 +102,27 @@ since WiFi is needed for Influx anyways, it is used for other stuff as well:
 ## Grafana Panels using LiFePO_Island data
 ![grafik](https://user-images.githubusercontent.com/32450554/217285351-9d3be438-0db6-45f2-9e24-08eabd34858e.png)
 
+## Live web page, batching, test bench (since 4.2)
+
+* The start page shows the key values live (SoC, V/A/W, PV, load, cells,
+  temperatures, faults, link state) and their age; data comes from
+  `GET /api/live`. Load and MOSFETs are switched with `POST /api/load` and
+  `POST /api/mosfets`; the old form endpoints still work.
+* InfluxDB writes are batched (one POST every 5 s, retried with backoff, ms
+  timestamps) instead of one POST per change.
+* `pio test -e native` runs the unit tests; env `atom_echo` builds a
+  simulator firmware for an M5Stack Atom Echo test bench, and
+  `test/system/check_device.py` tests a running device.
+* JSON now carries `"Version"` as a string.
+* Home Assistant MQTT discovery: device `LiFePO_Island <instance>` with 26
+  entities; migration of the former hand-written YAML entities with
+  `tools/ha_migrate.py` (docs/admin.md).
+
+Documentation: [docs/spec.md](docs/spec.md) (architecture and decisions),
+[docs/spec-webui.md](docs/spec-webui.md), [docs/spec-telemetry.md](docs/spec-telemetry.md),
+[docs/spec-homeassistant.md](docs/spec-homeassistant.md),
+[docs/user.md](docs/user.md), [docs/admin.md](docs/admin.md), [docs/test.md](docs/test.md).
+
 Comments welcome
 
 Joachim Banzhaf

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="LiFePO Island">
+  <title>LiFePO_Island</title>
+  <circle cx="44" cy="17" r="9" fill="#f2b705"/>
+  <g stroke="#f2b705" stroke-width="2.5" stroke-linecap="round">
+    <path d="M44 2.5v4M44 27.5v4M29.5 17h4M54.5 17h4M33.7 6.7l2.8 2.8M51.5 24.5l2.8 2.8M33.7 27.3l2.8-2.8M51.5 9.5l2.8-2.8"/>
+  </g>
+  <rect x="9" y="22" width="26" height="30" rx="4" fill="#1f7a4d"/>
+  <rect x="16" y="18" width="12" height="5" rx="1.5" fill="#1f7a4d"/>
+  <path d="M24 27l-7 12h6l-3 9 9-13h-6l4-8z" fill="#fff"/>
+  <path d="M2 57c5-4 10-4 15 0s10 4 15 0 10-4 15 0 10 4 15 0" fill="none" stroke="#2a7fd4" stroke-width="3.5" stroke-linecap="round"/>
+</svg>
