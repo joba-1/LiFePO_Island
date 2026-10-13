@@ -109,6 +109,7 @@ feature) and is committed **before** the build; the release commit is tagged
 
 | Version | Date | Content |
 |---|---|---|
+| 4.4.2 | 2026-10-13 | no balancing explanation text, more space around the legend, "Charger: battery" |
 | 4.4.1 | 2026-10-13 | outline for near-white cell bars (light mode), shorter balancing text |
 | 4.4.0 | 2026-10-13 | cell bars coloured by deviation from the average, ▼ drain / ▲ low while balancing |
 | 4.3.0 | 2026-10-13 | probe names (`custom_ntc_names`), energy in Wh, cells in V, labels/tooltips, git commit in the firmware |

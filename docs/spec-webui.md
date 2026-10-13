@@ -33,8 +33,9 @@ Layout, top to bottom:
      deviation from the average of all cells (blue below, white at average,
      orange to red above; full colour at ±25 mV), with a legend. While the BMS
      balances: **▼ drain** on cells it drains, **▲ low** on cells below
-     average. The JBD BMS balances passively (it can only bleed charge off), so
-     ▲ means "keeps its charge while the others come down". Voltages outside
+     average (no explanation text on the page; see user.md). The JBD BMS
+     balances passively (it can only bleed charge off), so ▲ means "keeps its
+     charge while the others come down". Voltages outside
      3.0–3.6 V are printed red. Min/avg/max in V, spread in mV, per-cell
      tooltip with the deviation in mV.
    * **Temperatures**: BMS NTCs, charger battery and internal sensor.
