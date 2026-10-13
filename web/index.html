@@ -62,6 +62,9 @@ main { padding: 16px; max-width: 1100px; margin: 0 auto; }
 button[title], input[title] { cursor: pointer; }
 .pos { color: var(--ok); } .neg { color: var(--warn); }
 .state { font-weight: 600; }
+/* gauge: fixed gradient over the full width, a cover hides the part above the current value */
+.meter.gauge { position: relative; background: linear-gradient(90deg, var(--ok), #e0b000 55%, var(--warn) 75%, var(--bad)); }
+.meter.gauge > div { position: absolute; top: 0; right: 0; height: 100%; width: 100%; background: var(--bar); transition: width .5s; }
 .caption { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin-top: -2px; } .state.on { color: var(--ok); } .state.off { color: var(--muted); }
 .btns { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 button, input[type=submit] { font: inherit; padding: 6px 14px; border-radius: 6px; border: 1px solid var(--line);
@@ -116,7 +119,7 @@ footer a { color: inherit; }
     <section class="card">
       <h2>Load</h2>
       <div class="big"><span id="loadW">–</span> W</div>
-      <div class="meter" title="Load power from 0 up to the charger's load output limit (max. discharge current × battery voltage)"><div id="loadBar"></div></div>
+      <div class="meter gauge" title="Load power from 0 up to the charger's load output limit (max. discharge current × battery voltage)"><div id="loadCover"></div></div>
       <div class="caption"><span id="load" class="state">–</span><span id="loadMax">–</span></div>
       <div class="btns">
         <button data-load="on">Load ON</button>
@@ -257,8 +260,7 @@ function render(d) {
   ls.textContent = c.load === null ? "state unknown" : c.load ? "" : "off";
   ls.className = "state off";
   const pct = c.loadMaxW ? Math.min(100, 100 * (c.loadW || 0) / c.loadMaxW) : 0;
-  $("loadBar").style.width = (c.load ? pct : 0) + "%";
-  $("loadBar").style.background = pct > 90 ? "var(--bad)" : pct > 75 ? "var(--warn)" : "var(--ok)";
+  $("loadCover").style.width = (100 - (c.load ? pct : 0)) + "%";   // uncovers the gradient up to the load
   set("loadMax", c.loadMaxW ? "max " + c.loadMaxW + " W" : "");
 
   // cells
