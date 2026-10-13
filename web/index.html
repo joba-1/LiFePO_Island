@@ -46,9 +46,16 @@ main { padding: 16px; max-width: 1100px; margin: 0 auto; }
 .meter { height: 10px; background: var(--bar); border-radius: 5px; overflow: hidden; margin: 6px 0 8px; }
 .meter > div { height: 100%; width: 0; background: var(--ok); transition: width .5s; }
 .cells { display: grid; gap: 6px; }
-.cell { display: grid; grid-template-columns: 18px 1fr 62px 70px; align-items: center; gap: 8px; font-variant-numeric: tabular-nums; }
-.cell .meter { margin: 0; }
-.cell .bal { justify-self: end; font-size: 11px; color: var(--accent); border: 1px solid var(--accent); border-radius: 4px; padding: 0 4px; margin-left: 4px; }
+.cell { display: grid; grid-template-columns: 18px 1fr 62px 58px; align-items: center; gap: 8px; font-variant-numeric: tabular-nums; }
+.cell .meter { margin: 0; box-shadow: inset 0 0 0 1px var(--line); }
+.cell .danger { color: var(--bad); font-weight: 600; }
+.legend { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; margin-top: 4px; }
+.legend .scale { flex: 1; height: 8px; border-radius: 4px; box-shadow: inset 0 0 0 1px var(--line);
+  background: linear-gradient(90deg, rgb(37,99,235), rgb(255,255,255), rgb(245,158,11), rgb(220,38,38)); }
+.cell .bal { justify-self: end; font-size: 11px; white-space: nowrap; }
+.cell .bal.drain { color: rgb(234,88,12); }
+.cell .bal.low { color: rgb(37,99,235); }
+@media (prefers-color-scheme: dark) { .cell .bal.low { color: rgb(96,165,250); } }
 .hint { color: var(--muted); font-size: 12px; margin-top: 6px; }
 [title] { cursor: help; }
 button[title], input[title] { cursor: pointer; }
@@ -116,9 +123,10 @@ footer a { color: inherit; }
     <section class="card">
       <h2>Cells <span class="age" id="cellsInfo"></span></h2>
       <div class="cells" id="cells"><span class="none">no data</span></div>
-      <div class="row" style="margin-top:6px"><span>Min / max</span><span id="spread" class="nowrap">–</span></div>
+      <div class="legend" title="Bar colour: deviation of the cell from the average of all cells, full colour at ±25 mV"><span>below</span><div class="scale"></div><span>above avg</span></div>
+      <div class="row" style="margin-top:6px"><span>Min / avg / max</span><span id="spread" class="nowrap">–</span></div>
       <div class="row"><span title="Difference between the highest and the lowest cell">Spread</span><span id="delta">–</span></div>
-      <div class="hint" id="balHint" hidden>balancing: the BMS bleeds a little charge from cells that are fuller than the others, so all end up equal. While it does, those cells read a few mV lower. Normal when full.</div>
+      <div class="hint" id="balHint" hidden>Balancing (normal when full): ▼ the BMS drains this cell through a resistor because it is fuller than the others; while it does, the cell reads a few mV lower. ▲ below average: keeps its charge while the others come down to it (this BMS balances passively, it cannot move charge into a cell).</div>
     </section>
     <section class="card">
       <h2>Temperatures</h2>
@@ -196,6 +204,16 @@ function signed(v, unit, digits) {
   if (v === null) return "–";
   return (v > 0 ? "+" : "") + Number(v).toFixed(digits) + " " + unit;
 }
+// cell deviation from the average -> colour: blue (below) - white - orange - red (above)
+const DEV_FULL_MV = 25;
+function mix(a, b, t) { return a.map((x, k) => Math.round(x + (b[k] - x) * t)); }
+function deviationColor(d) {
+  const t = Math.min(1, Math.abs(d) / DEV_FULL_MV);
+  const white = [255, 255, 255], blue = [37, 99, 235], orange = [245, 158, 11], red = [220, 38, 38];
+  const c = d < 0 ? mix(white, blue, t) : t < 0.5 ? mix(white, orange, t * 2) : mix(orange, red, (t - 0.5) * 2);
+  return "rgb(" + c.join(",") + ")";
+}
+
 function message(text, bad) {
   const m = $("msg");
   m.textContent = text || "";
@@ -243,22 +261,29 @@ function render(d) {
     cells.append(n); set("spread", "–"); set("delta", "–"); $("balHint").hidden = true; set("cellsInfo", "");
   } else {
     const min = Math.min(...b.cellsMv), max = Math.max(...b.cellsMv);
+    const avg = b.cellsMv.reduce((a, x) => a + x, 0) / b.cellsMv.length;
+    const balancing = b.balancing.some(x => x);
     b.cellsMv.forEach((mv, i) => {
+      const d = mv - avg;
       const row = document.createElement("div"); row.className = "cell";
+      row.title = "Cell " + (i + 1) + ": " + (mv / 1000).toFixed(3) + " V, " + (d >= 0 ? "+" : "") + d.toFixed(0) +
+                  " mV vs. average " + (avg / 1000).toFixed(3) + " V" + (b.balancing[i] ? ", drained by the BMS" : "");
       const name = document.createElement("span"); name.textContent = i + 1;
       const meter = document.createElement("div"); meter.className = "meter";
       const bar = document.createElement("div");
       bar.style.width = Math.max(0, Math.min(100, (mv - 2800) / 8)) + "%";   // 2.8 V .. 3.6 V
-      bar.style.background = mv < 3000 || mv > 3600 ? "var(--bad)" : (mv === max && max - min > 30) ? "var(--warn)" : "var(--ok)";
+      bar.style.background = deviationColor(d);
       meter.append(bar);
       const val = document.createElement("span"); val.textContent = (mv / 1000).toFixed(3) + " V";
+      if (mv < 3000 || mv > 3600) { val.className = "danger"; val.title = "outside 3.0-3.6 V"; }
       const bal = document.createElement("span");
-      if (b.balancing[i]) { bal.className = "bal"; bal.textContent = "balancing"; }
+      if (b.balancing[i]) { bal.className = "bal drain"; bal.textContent = "▼ drain"; }
+      else if (balancing && d < 0) { bal.className = "bal low"; bal.textContent = "▲ low"; }
       row.append(name, meter, val, bal); cells.append(row);
     });
-    set("spread", (min / 1000).toFixed(3) + " / " + (max / 1000).toFixed(3) + " V");
+    set("spread", (min / 1000).toFixed(3) + " / " + (avg / 1000).toFixed(3) + " / " + (max / 1000).toFixed(3) + " V");
     set("delta", (max - min) + " mV");
-    $("balHint").hidden = !b.balancing.some(x => x);
+    $("balHint").hidden = !balancing;
     set("cellsInfo", "");
   }
 
