@@ -30,9 +30,9 @@ Layout, top to bottom:
    * **Solar** (charger): PV V, charge W, charge mode, charger SoC estimate.
    * **Load**: load W with a bar from 0 to the charger's load output limit
      (`loadMaxW` = max. discharge current × battery voltage, ~400 W at 30 A;
-     a gauge: fixed gradient green → yellow → red over the full width,
-     uncovered up to the present load), "off" under the bar when the output
-     is off, buttons ON / OFF.
+     one solid colour in steps like the SoC bar: green, amber above 75 %,
+     red above 90 %), "off" under the bar when the output is off, buttons
+     ON / OFF.
    * **Cells**: one bar per cell in V (3 decimals); the bar colour shows the
      deviation from the average of all cells (blue below, white at average,
      orange to red above; full colour at ±25 mV), with a legend. While the BMS

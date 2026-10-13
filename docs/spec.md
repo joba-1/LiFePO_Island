@@ -109,6 +109,7 @@ feature) and is committed **before** the build; the release commit is tagged
 
 | Version | Date | Content |
 |---|---|---|
+| 4.5.2 | 2026-10-13 | load bar back to one solid colour in steps like the SoC bar (green, amber > 75 %, red > 90 %) |
 | 4.5.1 | 2026-10-13 | load bar as a gauge: fixed gradient green → yellow → red over the full width, uncovered up to the load |
 | 4.5.0 | 2026-10-13 | load bar 0 … load output limit (`loadMaxW`) instead of the "Output ON" row; header time without "updated" |
 | 4.4.3 | 2026-10-13 | cells: "Min / max" and "Average" on separate rows (fits the desktop card) |
