@@ -125,7 +125,8 @@ footer a { color: inherit; }
       <h2>Cells <span class="age" id="cellsInfo"></span></h2>
       <div class="cells" id="cells"><span class="none">no data</span></div>
       <div class="legend" title="Bar colour: deviation of the cell from the average of all cells, full colour at ±25 mV"><span>below</span><div class="scale"></div><span>above avg</span></div>
-      <div class="row" style="margin-top:6px"><span title="lowest / average / highest cell">Min/avg/max</span><span id="spread" class="nowrap">–</span></div>
+      <div class="row"><span>Min / max</span><span id="spread" class="nowrap">–</span></div>
+      <div class="row"><span>Average</span><span id="avg">–</span></div>
       <div class="row"><span title="Difference between the highest and the lowest cell">Spread</span><span id="delta">–</span></div>
     </section>
     <section class="card">
@@ -258,7 +259,7 @@ function render(d) {
   cells.replaceChildren();
   if (!b.cellsMv || !b.cellsMv.length) {
     const n = document.createElement("span"); n.className = "none"; n.textContent = "no data";
-    cells.append(n); set("spread", "–"); set("delta", "–"); set("cellsInfo", "");
+    cells.append(n); set("spread", "–"); set("avg", "–"); set("delta", "–"); set("cellsInfo", "");
   } else {
     const min = Math.min(...b.cellsMv), max = Math.max(...b.cellsMv);
     const avg = b.cellsMv.reduce((a, x) => a + x, 0) / b.cellsMv.length;
@@ -281,7 +282,8 @@ function render(d) {
       else if (balancing && d < 0) { bal.className = "bal low"; bal.textContent = "▲ low"; }
       row.append(name, meter, val, bal); cells.append(row);
     });
-    set("spread", (min / 1000).toFixed(3) + " / " + (avg / 1000).toFixed(3) + " / " + (max / 1000).toFixed(3) + " V");
+    set("spread", (min / 1000).toFixed(3) + " / " + (max / 1000).toFixed(3) + " V");
+    set("avg", (avg / 1000).toFixed(3) + " V");
     set("delta", (max - min) + " mV");
     set("cellsInfo", "");
   }
