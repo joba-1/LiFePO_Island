@@ -61,7 +61,8 @@ main { padding: 16px; max-width: 1100px; margin: 0 auto; }
 [title] { cursor: help; }
 button[title], input[title] { cursor: pointer; }
 .pos { color: var(--ok); } .neg { color: var(--warn); }
-.state { font-weight: 600; } .state.on { color: var(--ok); } .state.off { color: var(--muted); }
+.state { font-weight: 600; }
+.caption { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin-top: -2px; } .state.on { color: var(--ok); } .state.off { color: var(--muted); }
 .btns { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 button, input[type=submit] { font: inherit; padding: 6px 14px; border-radius: 6px; border: 1px solid var(--line);
   background: var(--bg); color: var(--text); cursor: pointer; }
@@ -115,7 +116,8 @@ footer a { color: inherit; }
     <section class="card">
       <h2>Load</h2>
       <div class="big"><span id="loadW">–</span> W</div>
-      <div class="row"><span>Output</span><span id="load" class="state">–</span></div>
+      <div class="meter" title="Load power from 0 up to the charger's load output limit (max. discharge current × battery voltage)"><div id="loadBar"></div></div>
+      <div class="caption"><span id="load" class="state">–</span><span id="loadMax">–</span></div>
       <div class="btns">
         <button data-load="on">Load ON</button>
         <button data-load="off">Load OFF</button>
@@ -250,9 +252,14 @@ function render(d) {
 
   // load
   set("loadW", num(c.loadW));
+  // load bar: 0 .. load output limit; the caption names the state only when not on
   const ls = $("load");
-  ls.textContent = c.load === null ? "unknown" : c.load ? "ON" : "OFF";
-  ls.className = "state " + (c.load ? "on" : "off");
+  ls.textContent = c.load === null ? "state unknown" : c.load ? "" : "off";
+  ls.className = "state off";
+  const pct = c.loadMaxW ? Math.min(100, 100 * (c.loadW || 0) / c.loadMaxW) : 0;
+  $("loadBar").style.width = (c.load ? pct : 0) + "%";
+  $("loadBar").style.background = pct > 90 ? "var(--bad)" : pct > 75 ? "var(--warn)" : "var(--ok)";
+  set("loadMax", c.loadMaxW ? "max " + c.loadMaxW + " W" : "");
 
   // cells
   const cells = $("cells");
@@ -352,7 +359,7 @@ async function poll() {
     const d = await r.json();
     render(d);
     last = d; lastOk = Date.now();
-    set("poll", "updated " + new Date().toLocaleTimeString());
+    set("poll", new Date().toLocaleTimeString());   // time of the last good poll
   } catch (e) {
     $("dot").className = "bad";
     set("poll", "device not reachable" + (lastOk ? " since " + new Date(lastOk).toLocaleTimeString() : ""));

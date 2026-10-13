@@ -1193,6 +1193,7 @@ void fill_live(LiveJson::Live &d) {
     c.chgW = es3ChgSts.wChgPower;
     c.loadW = es3ChgSts.wLoadPower;
     c.load = load_state;
+    c.maxLoadDeciA = es3BatParam.wMaxDisChgCurr;
     c.batTempC = es3ChgSts.wBatTemp;
     c.innerTempC = es3ChgSts.wInnerTemp;
     c.capPct = es3ChgSts.wBatCap;

@@ -31,6 +31,7 @@ struct Charger {
     uint16_t mode = 0;          ///< ESmart3::chgMode_t
     uint16_t pvDeciV = 0, batDeciV = 0, chgW = 0, loadW = 0;
     int8_t   load = -1;         ///< -1 unknown, 0 off, 1 on
+    uint16_t maxLoadDeciA = 0;  ///< BatParam.wMaxDisChgCurr: load output limit, 0 = unknown
     int16_t  batTempC = 0, innerTempC = 0;
     uint16_t capPct = 0;
     uint16_t faults = 0;
@@ -96,7 +97,7 @@ inline void writeCharger(JsonWriter& w, const Charger& c) {
     if (!c.seen) {
         w.null();
         static const char* const keys[] = { "model", "serial", "mode", "pvV", "batV", "chgW",
-            "loadW", "load", "batTempC", "innerTempC", "capPct", "faults" };
+            "loadW", "load", "loadMaxW", "batTempC", "innerTempC", "capPct", "faults" };
         for (const char* k : keys) { w.key(k); w.null(); }
         w.close('}');
         return;
@@ -110,6 +111,10 @@ inline void writeCharger(JsonWriter& w, const Charger& c) {
     w.key("chgW");       w.integer(c.chgW);
     w.key("loadW");      w.integer(c.loadW);
     w.key("load");       if (c.load < 0) w.null(); else w.boolean(c.load);
+    // load output limit in W at the present battery voltage (0.1 A * 0.1 V = 0.01 W)
+    w.key("loadMaxW");
+    if (c.maxLoadDeciA && c.batDeciV) w.integer((long)((uint32_t)c.maxLoadDeciA * c.batDeciV / 100));
+    else w.null();
     w.key("batTempC");   w.integer(c.batTempC);
     w.key("innerTempC"); w.integer(c.innerTempC);
     w.key("capPct");     w.integer(c.capPct);

@@ -25,6 +25,7 @@ static LiveJson::Live sample() {
     d.charger.chgW = 41;
     d.charger.loadW = 0;
     d.charger.load = 1;
+    d.charger.maxLoadDeciA = 300;   // 30 A at 13.4 V = 402 W
     d.charger.batTempC = 13;
     d.charger.innerTempC = -2;
     d.charger.capPct = 97;
@@ -62,7 +63,7 @@ void test_full_document() {
         "{\"host\":\"lifepo_island-9\",\"version\":\"4.2.0\",\"commit\":\"df405f1\",\"uptimeS\":77,"
         "\"time\":\"2026-10-13T18:00:00\",\"timeValid\":true,\"msg\":\"Load \\\"on\\\"\","
         "\"charger\":{\"ageS\":1,\"model\":\"eSmart4\",\"serial\":\"62060003\",\"mode\":\"MPPT\","
-        "\"pvV\":23.2,\"batV\":13.4,\"chgW\":41,\"loadW\":0,\"load\":true,\"batTempC\":13,"
+        "\"pvV\":23.2,\"batV\":13.4,\"chgW\":41,\"loadW\":0,\"load\":true,\"loadMaxW\":402,\"batTempC\":13,"
         "\"innerTempC\":-2,\"capPct\":97,\"faults\":[\"PV low voltage\"]},"
         "\"bms\":{\"ageS\":2,\"id\":\"JBD\",\"V\":13.35,\"A\":-1.91,\"W\":-25.4,\"socPct\":81,"
         "\"remainAh\":220.46,\"fullAh\":272.00,\"remainWh\":2821,\"fullWh\":3481,\"cycles\":123,\"chargeFet\":true,\"dischargeFet\":true,"
@@ -100,6 +101,14 @@ void test_truncation_reported() {
     TEST_ASSERT_TRUE(strlen(out) < sizeof(out));
 }
 
+void test_load_max_unknown_is_null() {
+    LiveJson::Live d = sample();
+    d.charger.maxLoadDeciA = 0;     // BatParam not read yet
+    char out[2048];
+    LiveJson::write(out, sizeof(out), d);
+    TEST_ASSERT_NOT_NULL(strstr(out, "\"loadMaxW\":null"));
+}
+
 void test_mode_names() {
     TEST_ASSERT_EQUAL_STRING("wait", LiveJson::modeName(0));
     TEST_ASSERT_EQUAL_STRING("float", LiveJson::modeName(3));
@@ -120,6 +129,7 @@ int main() {
     RUN_TEST(test_never_seen_devices_are_null);
     RUN_TEST(test_load_unknown_is_null);
     RUN_TEST(test_truncation_reported);
+    RUN_TEST(test_load_max_unknown_is_null);
     RUN_TEST(test_mode_names);
     RUN_TEST(test_cell_count_clamped);
     return UNITY_END();

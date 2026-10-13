@@ -28,7 +28,10 @@ Layout, top to bottom:
    * **Battery** (BMS): SoC % with bar, V, A, W (+ charging, − discharging),
      energy left/full in Wh (Ah × 3.2 V nominal per cell × cells), cycles.
    * **Solar** (charger): PV V, charge W, charge mode, charger SoC estimate.
-   * **Load**: load W, state on/off, buttons ON / OFF.
+   * **Load**: load W with a bar from 0 to the charger's load output limit
+     (`loadMaxW` = max. discharge current × battery voltage, ~400 W at 30 A;
+     amber above 75 %, red above 90 %), "off" under the bar when the output
+     is off, buttons ON / OFF.
    * **Cells**: one bar per cell in V (3 decimals); the bar colour shows the
      deviation from the average of all cells (blue below, white at average,
      orange to red above; full colour at ±25 mV), with a legend. While the BMS
@@ -62,7 +65,7 @@ time of the last good poll.
   "charger": {
     "ageS": 0, "model": "eSmart4-60A", "serial": "62060003",
     "mode": "MPPT", "pvV": 23.2, "batV": 13.4, "chgW": 41, "loadW": 1,
-    "load": true, "batTempC": 13, "innerTempC": 13, "capPct": 97,
+    "load": true, "loadMaxW": 402, "batTempC": 13, "innerTempC": 13, "capPct": 97,
     "faults": ["PV low voltage"]
   },
   "bms": {
