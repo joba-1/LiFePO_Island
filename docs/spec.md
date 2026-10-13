@@ -109,6 +109,7 @@ feature) and is committed **before** the build; the release commit is tagged
 
 | Version | Date | Content |
 |---|---|---|
+| 4.4.1 | 2026-10-13 | outline for near-white cell bars (light mode), shorter balancing text |
 | 4.4.0 | 2026-10-13 | cell bars coloured by deviation from the average, ▼ drain / ▲ low while balancing |
 | 4.3.0 | 2026-10-13 | probe names (`custom_ntc_names`), energy in Wh, cells in V, labels/tooltips, git commit in the firmware |
 | 4.2.0 | 2026-10-13 | live page, batched InfluxDB, HA discovery, fixes from the review; later builds `1f7bb06` (DHCP, OTA Origin) and `df405f1` (page details) were deployed **still as 4.2.0** — the reason for this rule |

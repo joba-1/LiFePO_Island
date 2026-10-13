@@ -48,6 +48,8 @@ main { padding: 16px; max-width: 1100px; margin: 0 auto; }
 .cells { display: grid; gap: 6px; }
 .cell { display: grid; grid-template-columns: 18px 1fr 62px 58px; align-items: center; gap: 8px; font-variant-numeric: tabular-nums; }
 .cell .meter { margin: 0; box-shadow: inset 0 0 0 1px var(--line); }
+.cell .meter > div { box-shadow: inset 0 0 0 1px rgba(0,0,0,.22); }
+@media (prefers-color-scheme: dark) { .cell .meter > div { box-shadow: none; } }
 .cell .danger { color: var(--bad); font-weight: 600; }
 .legend { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; margin-top: 4px; }
 .legend .scale { flex: 1; height: 8px; border-radius: 4px; box-shadow: inset 0 0 0 1px var(--line);
@@ -124,9 +126,9 @@ footer a { color: inherit; }
       <h2>Cells <span class="age" id="cellsInfo"></span></h2>
       <div class="cells" id="cells"><span class="none">no data</span></div>
       <div class="legend" title="Bar colour: deviation of the cell from the average of all cells, full colour at ±25 mV"><span>below</span><div class="scale"></div><span>above avg</span></div>
-      <div class="row" style="margin-top:6px"><span>Min / avg / max</span><span id="spread" class="nowrap">–</span></div>
+      <div class="row" style="margin-top:6px"><span title="lowest / average / highest cell">Min/avg/max</span><span id="spread" class="nowrap">–</span></div>
       <div class="row"><span title="Difference between the highest and the lowest cell">Spread</span><span id="delta">–</span></div>
-      <div class="hint" id="balHint" hidden>Balancing (normal when full): ▼ the BMS drains this cell through a resistor because it is fuller than the others; while it does, the cell reads a few mV lower. ▲ below average: keeps its charge while the others come down to it (this BMS balances passively, it cannot move charge into a cell).</div>
+      <div class="hint" id="balHint" hidden>Balancing, normal when full. ▼ drain: the BMS bleeds this fuller cell through a resistor (meanwhile it reads a few mV lower). ▲ low: below average, keeps its charge while the others come down - the BMS cannot add charge.</div>
     </section>
     <section class="card">
       <h2>Temperatures</h2>
