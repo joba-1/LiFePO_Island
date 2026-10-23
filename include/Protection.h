@@ -45,7 +45,8 @@ struct Config {
     uint16_t criticalCellMv = 2950;
     uint8_t  hysteresisSoc = 5;     ///< to leave SLEEP / CRITICAL
     uint16_t hysteresisMv = 100;
-    uint16_t cellTestMaxCentiA = 300;  ///< cell voltage triggers for cut/sleep only at |I| <= 3 A (sag under load, rise while charging)
+    uint16_t sagMicroOhm = 1000;    ///< per cell: the cell voltage under discharge is lifted by I x this (empirical, below the p25 of the measured 1.1-1.6 mOhm: errs towards cutting early)
+    uint16_t maxSagMv = 100;        ///< cap of that lift
     uint8_t  debounce = 6;          ///< evaluations in a row (6 x 10 s = 1 min)
     uint32_t sleepS = 1800;         ///< length of one sleep in SLEEP
     uint32_t criticalSleepS = 21600;///< ... in CRITICAL
@@ -57,7 +58,7 @@ struct Inputs {
     uint16_t minCellMv = 0;         ///< 0 = unknown
     bool     loadKnown = false;
     bool     loadOn = false;
-    int16_t  centiA = 0;            ///< BMS current in 10 mA (+ charge): gates the cell voltage triggers
+    int16_t  centiA = 0;            ///< BMS current in 10 mA (+ charge, - discharge): sag compensation of the cell voltage
 };
 
 /// Persistent state: copy it to RTC memory so it survives deep sleep.
@@ -135,14 +136,17 @@ private:
         const uint16_t cell = in.minCellMv ? in.minCellMv : 65535;
         const uint8_t cutSoc = _cfg.loadOffSoc > _cfg.softMarginSoc ? _cfg.loadOffSoc - _cfg.softMarginSoc : 0;
 
-        // The cell voltage is informative only on the knee below ~15-20 %, and only at rest: gate it by current
-        const bool rest = (in.centiA < 0 ? -(int)in.centiA : (int)in.centiA) <= (int)_cfg.cellTestMaxCentiA;
-        bool enterCut = soc <= cutSoc || (rest && cell < _cfg.loadCutCellMv);
-        bool enterSleep = soc <= _cfg.sleepSoc || (rest && cell < _cfg.sleepCellMv);
+        // The cell voltage is informative on the knee below ~15-20 %. Under discharge the cell sags by I x R
+        // (measured 1.1-2.0 mOhm per cell, 40-70 mV at 35 A): look at the voltage it would have at rest.
+        // While charging it reads high, so a low value is low for real: no correction. The critical level uses
+        // the raw voltage at any current (damage prevention errs towards early).
+        const uint32_t eff = cell == 65535 ? 65535u : cell + sagMv(in);   // effective (rest) voltage
+        bool enterCut = soc <= cutSoc || eff < _cfg.loadCutCellMv;
+        bool enterSleep = soc <= _cfg.sleepSoc || eff < _cfg.sleepCellMv;
         bool enterCrit = soc <= _cfg.criticalSoc || cell < _cfg.criticalCellMv;
         // releasing needs a known state of charge: cell voltages alone are too flat to tell 15 % from 30 %
-        bool stayCut = cur >= LOAD_CUT && (!in.socValid || !(soc >= _cfg.loadOnSoc && cell >= _cfg.resumeCellMv));
-        bool staySleep = cur >= SLEEP && (!in.socValid || !(soc >= _cfg.sleepSoc + _cfg.hysteresisSoc && cell >= _cfg.sleepCellMv + _cfg.hysteresisMv));
+        bool stayCut = cur >= LOAD_CUT && (!in.socValid || !(soc >= _cfg.loadOnSoc && eff >= _cfg.resumeCellMv));
+        bool staySleep = cur >= SLEEP && (!in.socValid || !(soc >= _cfg.sleepSoc + _cfg.hysteresisSoc && eff >= _cfg.sleepCellMv + _cfg.hysteresisMv));
         bool stayCrit = cur >= CRITICAL && (!in.socValid || !(soc >= _cfg.criticalSoc + _cfg.hysteresisSoc && cell >= _cfg.criticalCellMv + _cfg.hysteresisMv));
 
         Level want = NORMAL;
@@ -151,6 +155,12 @@ private:
         if (enterSleep && cur == NORMAL) want = LOAD_CUT;                  // never straight to sleep
         if (enterCrit || stayCrit) want = CRITICAL;                        // damage prevention does not wait
         return want;
+    }
+
+    /// Lift of the cell voltage under discharge (mV): what the cell would read more at rest
+    uint32_t sagMv(const Inputs& in) const {
+        uint32_t mv = in.centiA < 0 ? ((uint32_t)(-(int32_t)in.centiA) * _cfg.sagMicroOhm) / 100000u : 0;
+        return mv > _cfg.maxSagMv ? _cfg.maxSagMv : mv;
     }
 
     void describe(char* out, size_t cap, const Inputs& in, Level from, Level to) const {
@@ -164,8 +174,15 @@ private:
             if (in.socValid && soc <= socThr) {
                 snprintf(trig, sizeof(trig), "soc %u %% <= %u %%", soc, socThr);
             }
-            else if (cell < mvThr) {
-                snprintf(trig, sizeof(trig), "lowest cell %u mV < %u mV", cell, mvThr);
+            else if (to == CRITICAL ? cell < mvThr : (uint32_t)cell + sagMv(in) < mvThr) {
+                uint32_t sag = to == CRITICAL ? 0 : sagMv(in);
+                if (sag) {
+                    snprintf(trig, sizeof(trig), "lowest cell %u mV + %u mV sag at %u.%u A < %u mV", cell, (unsigned)sag,
+                        (unsigned)(-in.centiA / 100), (unsigned)((-in.centiA % 100) / 10), mvThr);
+                }
+                else {
+                    snprintf(trig, sizeof(trig), "lowest cell %u mV < %u mV", cell, mvThr);
+                }
             }
             else if (to == SLEEP || from >= SLEEP) {
                 snprintf(trig, sizeof(trig), "load cut for %lu s", (unsigned long)_st.sinceCutS);

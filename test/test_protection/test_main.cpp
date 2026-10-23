@@ -67,18 +67,51 @@ void test_cell_voltage_is_an_independent_witness() {
     TEST_ASSERT_EQUAL(LOAD_CUT, o.level);
 }
 
-void test_cell_voltage_trigger_needs_rest() {
+void test_cell_voltage_is_corrected_for_sag() {
+    // 35 A discharge: 1 mOhm per cell lifts the reading by 35 mV towards what it would be at rest
+    Engine a;
+    Inputs i = in(60, 3160);
+    i.centiA = -3500;
+    TEST_ASSERT_EQUAL(NORMAL, run(a, i, 30).level);   // 3160 + 35 = 3195 >= 3190: healthy under load
+    Engine b;
+    i.minCellMv = 3150;                               // 3150 + 35 = 3185 < 3190: cut although the raw value is "only" 40 mV low
+    TEST_ASSERT_EQUAL(LOAD_CUT, run(b, i, 10).level);
+    Engine c;                                         // the same raw value at rest is a cut as well
+    i = in(60, 3189);
+    TEST_ASSERT_EQUAL(LOAD_CUT, run(c, i, 10).level);
+}
+
+void test_reason_shows_the_sag() {
     Engine e;
     Inputs i = in(60, 3150);
-    i.centiA = -3500;                              // 35 A discharge: the cell sags, no conclusion
-    Output o = run(e, i, 30);
-    TEST_ASSERT_EQUAL(NORMAL, o.level);
-    i.centiA = -200;                               // 2 A: at rest for this purpose
-    o = run(e, i, 10);
-    TEST_ASSERT_EQUAL(LOAD_CUT, o.level);
-    Engine c;                                      // charging: the cell rises, never a low reading
-    i.centiA = 1500;
-    TEST_ASSERT_EQUAL(NORMAL, run(c, i, 30).level);
+    i.centiA = -3500;
+    Output o;
+    for (int k = 0; k < 6; k++) o = e.update(i, 10);
+    TEST_ASSERT_EQUAL_STRING("normal -> load-cut: lowest cell 3150 mV + 35 mV sag at 35.0 A < 3190 mV", o.reason);
+}
+
+void test_sag_correction_is_capped() {
+    Engine e;
+    Inputs i = in(60, 3050);
+    i.centiA = -15000;                             // 150 A (a glitch): the lift stops at 100 mV
+    TEST_ASSERT_EQUAL(LOAD_CUT, run(e, i, 10).level);   // 3050 + 100 = 3150 < 3190
+}
+
+void test_charging_is_not_corrected() {
+    Engine e;
+    Inputs i = in(60, 3150);
+    i.centiA = 1500;                               // charging at 15 A: the cell reads high, so 3150 is really low
+    TEST_ASSERT_EQUAL(LOAD_CUT, run(e, i, 10).level);
+}
+
+void test_release_uses_the_corrected_voltage() {
+    Engine e;
+    run(e, in(12), 10);                            // cut
+    Inputs i = in(35, 3180);                       // under 10 A the cell reads 3180: corrected 3190, still below 3200
+    i.centiA = -1000;
+    TEST_ASSERT_EQUAL(LOAD_CUT, run(e, i, 20).level);
+    i.minCellMv = 3195;                            // corrected 3205: released
+    TEST_ASSERT_EQUAL(NORMAL, run(e, i, 10).level);
 }
 
 void test_critical_cell_voltage_ignores_current() {
@@ -246,7 +279,11 @@ int main() {
     RUN_TEST(test_software_follows_hardware_with_margin);
     RUN_TEST(test_reason_names_the_trigger);
     RUN_TEST(test_cell_voltage_is_an_independent_witness);
-    RUN_TEST(test_cell_voltage_trigger_needs_rest);
+    RUN_TEST(test_cell_voltage_is_corrected_for_sag);
+    RUN_TEST(test_reason_shows_the_sag);
+    RUN_TEST(test_sag_correction_is_capped);
+    RUN_TEST(test_charging_is_not_corrected);
+    RUN_TEST(test_release_uses_the_corrected_voltage);
     RUN_TEST(test_critical_cell_voltage_ignores_current);
     RUN_TEST(test_load_already_off_is_not_forced);
     RUN_TEST(test_single_bad_reading_ignored);

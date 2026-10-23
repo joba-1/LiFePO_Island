@@ -16,11 +16,11 @@ Charger and BMS act first. This software follows with a margin, and it alone dec
 | Level | Enter when (debounced: 6 evaluations of 10 s in a row) | Does |
 |---|---|---|
 | `normal` | | everything allowed |
-| `load-cut` | BMS SoC <= **13 %** (15 % target of charger/BMS minus 2), **or** lowest cell < **3.19 V** at |I| <= 3 A | forces the charger load off if it is still on (the charger or BMS did not cut it), refuses any "load on" (web, MQTT, button, old forms), logs |
-| `sleep` | SoC <= 10 % or lowest cell < 3.15 V (at rest), **and** at least 30 min after the load was cut | ESP deep sleep schedule: awake 3 min, asleep 30 min |
+| `load-cut` | BMS SoC <= **13 %** (15 % target of charger/BMS minus 2), **or** the lowest cell, lifted by its sag (below), < **3.19 V** | forces the charger load off if it is still on (the charger or BMS did not cut it), refuses any "load on" (web, MQTT, button, old forms), logs |
+| `sleep` | SoC <= 10 % or lowest cell (lifted by its sag) < 3.15 V, **and** at least 30 min after the load was cut | ESP deep sleep schedule: awake 3 min, asleep 30 min |
 | `critical` | SoC <= 3 % or lowest cell < 2.95 V (any current) | as sleep but 6 h asleep; discharge FET off (only if enabled), charge FET stays on |
 
-Leaving: `load-cut` needs **SoC >= 30 % and lowest cell >= 3.20 V**; `sleep` needs SoC >= 15 % and cell >= 3.25 V;
+Leaving: `load-cut` needs **SoC >= 30 % and lowest cell (lifted by its sag) >= 3.20 V**; `sleep` needs SoC >= 15 % and cell >= 3.25 V;
 `critical` needs SoC >= 8 % and cell >= 3.05 V. Without a known SoC (BMS data stale) a level is **held**, never released.
 When the cut ends the load is switched on again only if the user last wanted it on.
 
@@ -43,6 +43,27 @@ Average cell voltage at rest per BMS SoC: 5-10 % 3.14 V, 10-15 % 3.215 V, 15-20 
 So the cut has an independent witness (the weakest cell on the knee). The release uses the BMS counter: **the
 resume level only has to be right to about +/- 5 points** (user decision 2026-10-23: back on at a real 25 % or 35 %
 is precise enough), so the plateau does not matter for it, and no second witness is needed.
+
+## Cell voltage under load: sag compensation
+
+Under discharge the cells read lower than at rest, by I x R. Measured from 13,900 current steps (>= 1 A within 15 s)
+in the island history, per cell, from the BMS pack voltage / 4:
+
+| Cell temperature (battery box probe) | R per cell, p25 | median |
+|---|---|---|
+| >= 22 C | 1.04 mOhm | 1.42 mOhm |
+| 15-22 C | 1.09 | 1.45 |
+| 8-15 C | 1.28 | 1.63 |
+| < 8 C | 1.56 | 2.01 |
+
+At 35 A that is 40-70 mV, as much as the whole span between 15 % and 30 % on the flat curve, so the voltage
+trigger cannot ignore the load. Rule: **effective cell voltage = lowest cell + discharge current x 1.0 mOhm**
+(capped at +100 mV), compared with the cut, sleep and release levels. 1.0 mOhm is below the p25 of every temperature,
+so the correction errs towards cutting early and releasing late, also in the cold (2.0 mOhm). While charging the
+cell reads high, so a low value is really low: no correction. The critical level uses the **raw** voltage at any
+current. The event text shows the correction: `lowest cell 3150 mV + 35 mV sag at 35.0 A < 3190 mV`.
+(The current is the one the BMS measures: consumers wired past the BMS shunt are not in it, see
+[wiring-check.md](wiring-check.md).)
 
 ## The BMS counter
 
