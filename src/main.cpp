@@ -26,6 +26,7 @@ Specification: docs/spec.md (and docs/spec-*.md)
 #include "LiveJson.h"
 #include "HaDiscovery.h"
 #include "MqttCmd.h"
+#include "Protection.h"
 #include "TextEscape.h"
 #include "web_assets.h"   // generated from web/ by embed_web.py
 
@@ -1241,6 +1242,166 @@ void device_text(char *dst, size_t cap, const void *src, size_t len) {
 }
 
 // Collect the current values for GET /api/live (docs/spec-webui.md)
+// ---- Battery reserve policy: include/Protection.h, docs/spec-protection.md ----
+// Charger and BMS cut the load first (about 15 % / their voltage settings). This software follows with a
+// margin, decides when the load may come back (30 %), when the ESP sleeps and, if enabled, when the discharge
+// FET goes off to protect the cells. Every action is logged with who did it and why: syslog, MQTT
+// status/Protection, InfluxDB Protection, /api/live protection.lastEvent.
+#ifndef PROT_ENFORCE_LOAD
+    #define PROT_ENFORCE_LOAD 1     // software cuts the load (backstop) and releases it again
+#endif
+#ifndef PROT_ENFORCE_SLEEP
+    #define PROT_ENFORCE_SLEEP 1    // deep sleep schedule at low charge
+#endif
+#ifndef PROT_ENFORCE_FET
+    #define PROT_ENFORCE_FET 0      // discharge FET off when critical: not before the wiring is verified
+#endif
+#ifndef PROT_AWAKE_S
+    #define PROT_AWAKE_S 180        // stay awake this long after a wake-up (web, OTA, data) before sleeping again
+#endif
+
+static Protection::Config protection_config() {
+    Protection::Config c;
+#ifdef PROT_SLEEP_DELAY_S
+    c.sleepDelayS = PROT_SLEEP_DELAY_S;
+#endif
+#ifdef PROT_SLEEP_S
+    c.sleepS = PROT_SLEEP_S;
+#endif
+#ifdef PROT_CRITICAL_SLEEP_S
+    c.criticalSleepS = PROT_CRITICAL_SLEEP_S;
+#endif
+#ifdef PROT_DEBOUNCE
+    c.debounce = PROT_DEBOUNCE;
+#endif
+    return c;
+}
+
+Protection::Engine protection(protection_config());
+Protection::Output prot_out;           // last evaluation
+bool user_wants_load = true;           // what the user last asked for: only then the load is switched on again
+uint32_t last_load_cmd_ms = 0;         // when this device last switched the load (to tell the charger's own changes)
+char prot_event_text[160] = "";        // last event, for the page
+uint32_t prot_event_ms = 0;            // 0: none since boot
+uint32_t prot_extra_dt_s = 0;          // seconds asleep, added to the next evaluation
+bool prot_resume_pending = false;
+bool prot_fet_cut = false;             // the discharge FET was switched off by this software
+
+#if defined(ESP32)
+// Survives deep sleep and software resets (not a power cycle)
+#define PROT_RTC_MAGIC 0x4c694650u
+RTC_DATA_ATTR uint32_t prot_rtc_magic = 0;
+RTC_DATA_ATTR uint8_t prot_rtc_level = 0, prot_rtc_want = 0, prot_rtc_count = 0, prot_rtc_flags = 0;  // flags: 1 user wants load, 2 FET cut by us
+RTC_DATA_ATTR uint32_t prot_rtc_since_s = 0, prot_rtc_sleep_s = 0;
+#endif
+
+void prot_save_rtc() {
+#if defined(ESP32)
+    const Protection::State &s = protection.state();
+    prot_rtc_level = s.level;
+    prot_rtc_want = s.wantLevel;
+    prot_rtc_count = s.wantCount;
+    prot_rtc_since_s = s.sinceCutS;
+    prot_rtc_flags = (user_wants_load ? 1 : 0) | (prot_fet_cut ? 2 : 0);
+    prot_rtc_magic = PROT_RTC_MAGIC;
+#endif
+}
+
+void prot_restore_rtc() {
+#if defined(ESP32)
+    esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+    if (prot_rtc_magic != PROT_RTC_MAGIC || prot_rtc_level > Protection::CRITICAL) {
+        prot_rtc_magic = 0;
+        return;
+    }
+    Protection::State &s = protection.state();
+    s.level = prot_rtc_level;
+    s.wantLevel = prot_rtc_want;
+    s.wantCount = prot_rtc_count;
+    s.sinceCutS = prot_rtc_since_s;
+    user_wants_load = prot_rtc_flags & 1;
+    prot_fet_cut = prot_rtc_flags & 2;
+    char text[140];
+    if (cause == ESP_SLEEP_WAKEUP_TIMER) {
+        prot_extra_dt_s = prot_rtc_sleep_s;
+        snprintf(text, sizeof(text), "PROTECTION woke from deep sleep after %lu min, level %s",
+            (unsigned long)(prot_rtc_sleep_s / 60), Protection::levelName(s.level));
+    }
+    else {
+        snprintf(text, sizeof(text), "PROTECTION restored level %s after a restart", Protection::levelName(s.level));
+    }
+    prot_rtc_sleep_s = 0;
+    slog(text, LOG_NOTICE);
+#endif
+}
+
+// Lowest cell in mV, 0 if the BMS data is missing or stale
+uint16_t prot_min_cell_mv() {
+    if (!bmsHealth.seen || !jbdStatus.cells || millis() - bmsHealth.ok_ms > 120000) return 0;
+    uint8_t n = jbdStatus.cells < 32 ? jbdStatus.cells : 32;
+    uint16_t lo = 0;
+    for (uint8_t i = 0; i < n; i++) {
+        uint16_t v = jbdCells.voltages[i];
+        if (v < 1000) continue;     // no reading yet
+        if (!lo || v < lo) lo = v;
+    }
+    return lo;
+}
+
+// One line per event: who (source) did what (action) and why. source: software, charger, bms, web, mqtt, button
+void protection_event(const char *source, const char *action, const char *why) {
+    uint16_t cell = prot_min_cell_mv();
+    unsigned packV = jbdStatus.voltage;
+    char text[300];
+    snprintf(text, sizeof(text), "PROTECTION [%s] %s: %s (level %s, soc %u %%, lowest cell %u mV, pack %u.%02u V)",
+        source, action, why, Protection::levelName(prot_out.level), jbdStatus.currentCapacity, cell, packV / 100, packV % 100);
+    slog(text, LOG_NOTICE);
+
+    snprintf(prot_event_text, sizeof(prot_event_text), "[%s] %s: %s", source, action, why);
+    prot_event_ms = millis() ? millis() : 1;
+
+    char e_action[96], e_why[200], json[480];
+    TextEscape::json(e_action, sizeof(e_action), action);
+    TextEscape::json(e_why, sizeof(e_why), why);
+    snprintf(json, sizeof(json),
+        "{\"level\":\"%s\",\"source\":\"%s\",\"action\":\"%s\",\"why\":\"%s\",\"soc\":%u,\"cellMv\":%u,\"packV\":%u.%02u}",
+        Protection::levelName(prot_out.level), source, e_action, e_why, jbdStatus.currentCapacity, cell, packV / 100, packV % 100);
+    publish_retained(MQTT_TOPIC "/status/Protection", json);
+
+    char line[512], f_action[96], f_why[160];
+    snprintf(f_action, sizeof(f_action), "%s", action);
+    snprintf(f_why, sizeof(f_why), "%s", why);
+    for (char *p = f_action; *p; p++) if (*p == '"' || *p == '\\') *p = '\'';   // Influx string field
+    for (char *p = f_why; *p; p++) if (*p == '"' || *p == '\\') *p = '\'';
+    snprintf(line, sizeof(line),
+        "Protection,Source=%s,Version=" VERSION " Host=\"%s\",Action=\"%s\",Why=\"%s\",Level=%u,Soc=%u,CellMin=%u,PackV=%u",
+        source, WiFi.getHostname(), f_action, f_why, (unsigned)prot_out.level, jbdStatus.currentCapacity, cell, packV);
+    postInflux(line);
+}
+
+// Switch the charger load for a user path (web, MQTT, button) or for the protection. While the battery
+// reserve policy holds the load off, "on" is refused. false: refused or the charger did not answer.
+bool load_command(bool on, const char *source, const char *&text) {
+    if (strcmp(source, "software")) user_wants_load = on;        // protection does not change what the user wants
+    if (on && prot_out.loadInhibited) {
+        char why[100];
+        snprintf(why, sizeof(why), "battery reserve: soc %u %%, back on at %u %%", jbdStatus.currentCapacity,
+            (unsigned)protection.config().loadOnSoc);
+        protection_event(source, "load on refused", why);
+        text = "Load stays off: battery reserve";
+        return false;
+    }
+    if (!esmart3.setLoad(on)) {
+        text = "Load unknown";
+        return false;
+    }
+    load_state = on;
+    last_load_cmd_ms = millis();
+    text = on ? "Load on" : "Load off";
+    return true;
+}
+
+
 void fill_live(LiveJson::Live &d) {
     uint32_t now = millis();
     snprintf(d.host, sizeof(d.host), "%s", WiFi.getHostname());
@@ -1291,6 +1452,15 @@ void fill_live(LiveJson::Live &d) {
     }
     b.faults = jbdStatus.fault;
     b.ntcNames = NTC_NAMES;
+
+    LiveJson::Reserve &r = d.reserve;
+    r.level = prot_out.level;
+    r.loadInhibited = prot_out.loadInhibited;
+    r.enforceLoad = PROT_ENFORCE_LOAD;
+    r.enforceSleep = PROT_ENFORCE_SLEEP;
+    r.enforceFet = PROT_ENFORCE_FET;
+    r.eventAgeS = prot_event_ms ? (int32_t)((now - prot_event_ms) / 1000) : -1;
+    snprintf(r.event, sizeof(r.event), "%s", prot_event_text);
 
     LiveJson::Link &l = d.link;
     l.rssi = WiFi.RSSI();
@@ -1472,13 +1642,12 @@ bool switch_load(const char *state, const char *&msg, bool &on) {
     else {
         on = !strcmp(state, "on");
         if (known && cur == on) {      // nothing to do
+            user_wants_load = on;
             msg = on ? "Load on" : "Load off";
             return true;
         }
     }
-    if (!esmart3.setLoad(on)) return false;
-    msg = on ? "Load on" : "Load off";
-    load_state = on;
+    if (!load_command(on, "web", msg)) return false;   // msg tells why not
     slog(on ? "Load switched ON (web)" : "Load switched OFF (web)", LOG_NOTICE);
     return true;
 }
@@ -1498,6 +1667,150 @@ bool set_mosfets(uint8_t mosfetStatus, const char *&msg) {
     slog(msg, LOG_NOTICE);
     return true;
 }
+
+// Evaluate the battery reserve policy every 10 s and carry out what it says (docs/spec-protection.md)
+void handle_protection() {
+    static const uint32_t interval = 10000;
+    static uint32_t prev = 0;
+    static bool first = true;
+    static bool fet_noted = false;
+    uint32_t now = millis();
+    if (!first && now - prev < interval) return;
+    uint32_t dtS = (first ? 0 : (now - prev) / 1000) + prot_extra_dt_s;
+    first = false;
+    prot_extra_dt_s = 0;
+    prev = now;
+
+    Protection::Inputs in;
+    in.socValid = bmsHealth.seen && jbdStatus.cells && now - bmsHealth.ok_ms < 120000;
+    in.soc = jbdStatus.currentCapacity;
+    in.minCellMv = prot_min_cell_mv();
+    in.loadKnown = load_state >= 0;
+    in.loadOn = load_state == 1;
+    in.centiA = jbdStatus.current;
+
+    Protection::Output o = protection.update(in, dtS);
+    prot_out = o;
+    prot_save_rtc();
+
+    if (o.changed) {
+        char action[40];
+        snprintf(action, sizeof(action), "level %s", Protection::levelName(o.level));
+        protection_event("software", action, o.reason);
+    }
+
+    // 1) the load: charger and BMS should have cut it already; if it is on, we do it
+    if (o.forceLoadOff) {
+        static uint32_t last_try = 0;
+        if (!last_try || now - last_try >= 30000) {
+            last_try = now ? now : 1;
+            static const char why[] = "the load is on although the reserve is low: charger and BMS did not cut it, or it was switched on again";
+#if PROT_ENFORCE_LOAD
+            if (esmart3.setLoad(false)) {
+                load_state = 0;
+                last_load_cmd_ms = now;
+                protection_event("software", "load off", why);
+            }
+            else {
+                slog("PROTECTION could not switch the load off: the charger does not answer", LOG_ERR);
+            }
+#else
+            protection_event("software", "would switch the load off (not enforced)", why);
+#endif
+        }
+    }
+    if (o.resumeLoad) prot_resume_pending = true;
+    if (prot_resume_pending && !o.loadInhibited) {
+        static uint32_t last_resume = 0;
+        if (!user_wants_load) {
+            prot_resume_pending = false;
+            protection_event("software", "load stays off", "the reserve is restored but the load had been switched off by hand");
+        }
+        else if (load_state == 1) {
+            prot_resume_pending = false;                    // the charger already brought it back
+        }
+        else if (!last_resume || now - last_resume >= 30000) {
+            last_resume = now ? now : 1;
+            static const char why[] = "battery reserve restored";
+#if PROT_ENFORCE_LOAD
+            if (esmart3.setLoad(true)) {
+                load_state = 1;
+                last_load_cmd_ms = now;
+                prot_resume_pending = false;
+                protection_event("software", "load on", why);
+            }
+            else {
+                slog("PROTECTION could not switch the load on: the charger does not answer", LOG_ERR);
+            }
+#else
+            prot_resume_pending = false;
+            protection_event("software", "would switch the load on (not enforced)", why);
+#endif
+        }
+    }
+
+    // 2) the cells: discharge FET off at critical levels, charge FET stays on so the sun can recharge
+    if (o.fetOff && !prot_fet_cut) {
+        static const char why[] = "cell damage near: only the charge FET stays on";
+#if PROT_ENFORCE_FET
+        const char *text;
+        if (set_mosfets(JbdBms::MOSFET_CHARGE, text)) {
+            prot_fet_cut = true;
+            protection_event("software", "discharge FET off", why);
+        }
+#else
+        if (!fet_noted) {
+            fet_noted = true;
+            protection_event("software", "would switch the discharge FET off (not enforced)", why);
+        }
+#endif
+    }
+    if (!o.fetOff) {
+        fet_noted = false;
+        if (prot_fet_cut) {
+            const char *text;
+            if (set_mosfets(JbdBms::MOSFET_BOTH, text)) {
+                prot_fet_cut = false;
+                protection_event("software", "discharge FET on", "the cells are out of the critical range");
+            }
+        }
+    }
+}
+
+// Deep sleep schedule at low charge: awake for PROT_AWAKE_S after every wake-up, then asleep for sleepS.
+// The sleep is announced first (event, MQTT, InfluxDB go out), then taken a little later.
+void handle_protection_sleep() {
+#if defined(ESP32) && PROT_ENFORCE_SLEEP
+    static uint32_t announced_ms = 0;
+#ifdef SIMULATE
+    if (simControl.noSleep) return;
+#endif
+    if (!prot_out.sleepWanted || !prot_out.sleepS || should_reboot) {
+        announced_ms = 0;
+        return;
+    }
+    uint32_t now = millis();
+    if (now < PROT_AWAKE_S * 1000UL) return;
+    if (!announced_ms) {
+        char why[110];
+        snprintf(why, sizeof(why), "level %s: awake %lu s, asleep %lu min, then another look at the battery",
+            Protection::levelName(prot_out.level), (unsigned long)(now / 1000), (unsigned long)(prot_out.sleepS / 60));
+        protection_event("software", "ESP deep sleep", why);
+        announced_ms = now ? now : 1;
+        return;
+    }
+    if (now - announced_ms < 15000 || influx.lines() > 0) {
+        if (now - announced_ms < 120000) return;           // give the queue time to go out, then sleep anyway
+    }
+    prot_rtc_sleep_s = prot_out.sleepS;
+    prot_save_rtc();
+    mqtt.disconnect();
+    WiFi.disconnect(true);
+    esp_sleep_enable_timer_wakeup((uint64_t)prot_out.sleepS * 1000000ULL);
+    esp_deep_sleep_start();
+#endif
+}
+
 
 // Old form endpoints answer with a redirect to the page, which shows web_msg
 void redirect_home(const char *message) {
@@ -1633,16 +1946,23 @@ void setup_webserver() {
         web_server.send(200, "text/plain", body.length() ? body : String("probe status ") + code);
     });
 
-    // Test builds only: GET /api/sim?charger=0|1&bms=0|1&chargerFaults=N&bmsFaults=N
+    // Test builds only: GET /api/sim?charger=0|1&bms=0|1&chargerFaults=N&bmsFaults=N&soc=<0..100|free>&nosleep=0|1
     web_server.on("/api/sim", HTTP_GET, []() {
         if (web_server.hasArg("charger")) simControl.chargerOnline = web_server.arg("charger") != "0";
         if (web_server.hasArg("bms")) simControl.bmsOnline = web_server.arg("bms") != "0";
         if (web_server.hasArg("chargerFaults")) simControl.chargerFaults = web_server.arg("chargerFaults").toInt();
         if (web_server.hasArg("bmsFaults")) simControl.bmsFaults = web_server.arg("bmsFaults").toInt();
-        char buf[160];
-        snprintf(buf, sizeof(buf), "{\"charger\":%s,\"bms\":%s,\"chargerFaults\":%u,\"bmsFaults\":%u,\"paramWrites\":%lu}",
+        if (web_server.hasArg("nosleep")) simControl.noSleep = web_server.arg("nosleep") != "0";
+        if (web_server.hasArg("soc")) {      // hold the state of charge (battery reserve tests), "free" releases it
+            String s = web_server.arg("soc");
+            simControl.socHold = s != "free";
+            if (simControl.socHold) simControl.socValue = s.toFloat() / 100.0f;
+        }
+        char buf[200];
+        snprintf(buf, sizeof(buf), "{\"charger\":%s,\"bms\":%s,\"chargerFaults\":%u,\"bmsFaults\":%u,\"paramWrites\":%lu,\"socHold\":%s}",
             simControl.chargerOnline ? "true" : "false", simControl.bmsOnline ? "true" : "false",
-            simControl.chargerFaults, simControl.bmsFaults, (unsigned long)esmart3.writes);
+            simControl.chargerFaults, simControl.bmsFaults, (unsigned long)esmart3.writes,
+            simControl.socHold ? "true" : "false");
         send_json(200, buf);
     });
 #endif
@@ -1677,13 +1997,15 @@ void setup_webserver() {
     });
 
     web_server.on("/switchon", HTTP_POST, []() {
-        esmart3.setLoad(true);
+        const char *m;
+        load_command(true, "web", m);
         web_server.sendHeader("Location", "/switch", true);  
         web_server.send(302, "text/plain", "");
     });
 
     web_server.on("/switchoff", HTTP_POST, []() {
-        esmart3.setLoad(false);
+        const char *m;
+        load_command(false, "web", m);
         web_server.sendHeader("Location", "/switch", true);  
         web_server.send(302, "text/plain", "");
     });
@@ -1918,7 +2240,8 @@ void handle_load_button( bool loadOn ) {
         }
         else if( debounceStatus == 0xffffffff && !pressed ) {
             pressed = true;
-            if (esmart3.setLoad(!loadOn)) {
+            const char *text;
+            if (load_command(!loadOn, "button", text)) {
                 if( !loadOn ) {
                     slog("Load switched ON", LOG_NOTICE);
                 }
@@ -1927,7 +2250,7 @@ void handle_load_button( bool loadOn ) {
                 }
             }
             else {
-                slog("Load UNKNOWN", LOG_ERR);
+                slog(text, LOG_ERR);
             }
         }
         // else if (debounceStatus) {
@@ -1951,6 +2274,12 @@ bool handle_load_led() {
         if( esmart3.getLoad(loadOn) ) {
             load_state = loadOn;
             if( !prevStatus || loadOn != prevLoad ) {
+                if( prevStatus && millis() - last_load_cmd_ms > 5000 ) {
+                    // not switched by this device: the charger (its own protection or schedule) or its switch
+                    protection_event("charger", loadOn ? "load on" : "load off",
+                        (es3ChgSts.wFault & 0x080) ? "not commanded by this device, the charger reports battery low voltage"
+                                                   : "not commanded by this device (charger setting or switch on the charger)");
+                }
                 if( loadOn ) {
                     if (LOAD_LED_PIN >= 0) digitalWrite(LOAD_LED_PIN, LOAD_LED_ON);
                     slog("Load is ON", LOG_NOTICE);
@@ -2232,11 +2561,9 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
             snprintf(msg, sizeof(msg), "Execute mqtt command '%s'", MqttCmd::name(cmd));
             slog(msg, LOG_INFO);
             bool on = cmd == MqttCmd::LOAD_ON;
-            if (esmart3.setLoad(on)) {
-                load_state = on;
-            }
-            else {
-                slog("Mqtt load command failed", LOG_ERR);
+            const char *text;
+            if (!load_command(on, "mqtt", text)) {
+                slog(text, LOG_ERR);
             }
             return;
         }
@@ -2317,6 +2644,7 @@ void setup() {
     syslog.deviceHostname(WiFi.getHostname());
     syslog.appName("Joba1");
     syslog.defaultPriority(LOG_KERN);
+    prot_restore_rtc();                // battery reserve state across deep sleep and restarts
 
     if (HEALTH_LED_PIN >= 0) digitalWrite(HEALTH_LED_PIN, HEALTH_LED_OFF);
 
@@ -2448,6 +2776,8 @@ void loop() {
 
     handle_bms_factory_guard();
     handle_load_button(handle_load_led());
+    handle_protection();
+    handle_protection_sleep();
     web_server.handleClient();
     if (should_reboot && (int32_t)(millis() - reboot_at) >= 0) {
         ESP.restart();

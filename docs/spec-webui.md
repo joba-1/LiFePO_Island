@@ -46,6 +46,9 @@ Layout, top to bottom:
    * **Protection**: BMS charge/discharge MOSFET switches (with confirm),
      active faults as text, or "none"; the charger's nightly "PV low voltage" bit is
      shown greyed as "(night)" and does not turn the status dot amber.
+     The row **Reserve policy** shows the level of the battery reserve policy
+     (normal, load cut, sleep schedule, critical) with the last event as text
+     ([spec-protection.md](spec-protection.md)); a tooltip says what is enforced.
      Below that **BMS limits**: the protection thresholds stored in the BMS
      (cell/pack under and over voltage with release voltage and delay, second
      cell level, current and temperature limits, balancer, the voltages the
@@ -81,6 +84,11 @@ time of the last good poll.
     "chargeFet": true, "dischargeFet": true,
     "cellsMv": [3342, 3338, 3339, 3338], "balancing": [false, false, false, false],
     "tempsC": [14.5, 12.4], "faults": []
+  },
+  "protection": {
+    "level": "normal", "loadInhibited": false,
+    "enforce": {"load": true, "sleep": true, "fet": false},
+    "lastEvent": {"ageS": 30, "text": "[software] load off: ..."}
   },
   "link": {
     "rssi": -83, "ip": "192.168.5.222",

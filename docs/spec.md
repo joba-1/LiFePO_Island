@@ -109,6 +109,7 @@ feature) and is committed **before** the build; the release commit is tagged
 
 | Version | Date | Content |
 |---|---|---|
+| 5.0.0 | 2026-10-23 | **Major release: the ESP firmware now has battery safety features of its own**, backing up what charger and BMS should do themselves ([spec-protection.md](spec-protection.md)): software load cut with margin (13 %) and back on (30 %), ESP deep sleep schedule, critical level protecting the cells; one `load_command()` path; every action logged with source and reason (syslog, MQTT, InfluxDB, `/api/live`). Not deployed yet |
 | 4.6.0 | 2026-10-23 | BMS protection limits (EEPROM) on request: `BmsParam` (page, `/api/bmsparam`, `/json/BmsParam`, MQTT, InfluxDB); JBD library 2.2 (31+ byte replies, result buffer size); silent bench envs for the MH-ET and the XIAO C6 |
 | 4.5.2 | 2026-10-13 | load bar back to one solid colour in steps like the SoC bar (green, amber > 75 %, red > 90 %) |
 | 4.5.1 | 2026-10-13 | load bar as a gauge: fixed gradient green → yellow → red over the full width, uncovered up to the load |
@@ -164,6 +165,8 @@ simulated data never mixes with the island's history.
 * **Simulator** for test builds rather than a second RS485 rig: it exercises
   the real code paths (polling, publishing, load and MOSFET switching) on any
   ESP32.
+* **Battery reserve policy in software** (5.0): charger and BMS cut first, the software follows with a margin and
+  owns the release; every action is an event with source and reason. See [spec-protection.md](spec-protection.md).
 * **BMS limits only on request** (4.6): the JBD BMS answers reads of its EEPROM
   settings only in "factory mode", and what the BMS does meanwhile (does it keep
   protecting the pack?) is not documented. So the island never polls them: an

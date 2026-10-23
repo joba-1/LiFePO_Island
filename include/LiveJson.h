@@ -17,6 +17,7 @@
 #include "Faults.h"
 #include "JsonWriter.h"
 #include "NameList.h"
+#include "Protection.h"
 
 namespace LiveJson {
 
@@ -55,6 +56,15 @@ struct Bms {
     uint16_t faults = 0;
 };
 
+/// Battery reserve policy (Protection.h): level, what is enforced, last event
+struct Reserve {
+    uint8_t  level = 0;             ///< Protection::Level
+    bool     loadInhibited = false;
+    bool     enforceLoad = false, enforceSleep = false, enforceFet = false;
+    int32_t  eventAgeS = -1;        ///< -1: no event since boot
+    char     event[160] = "";
+};
+
 struct Link {
     int      rssi = 0;
     char     ip[16] = "";
@@ -74,6 +84,7 @@ struct Live {
     char     msg[256] = "";     ///< one-shot message, raw text (escaped here)
     Charger  charger;
     Bms      bms;
+    Reserve  reserve;
     Link     link;
 };
 
@@ -186,6 +197,27 @@ inline bool write(char* out, size_t cap, const Live& d) {
     w.key("msg");       w.string(d.msg);
     w.key("charger");   writeCharger(w, d.charger);
     w.key("bms");       writeBms(w, d.bms);
+    w.key("protection");
+    w.open('{');
+    w.key("level");         w.string(Protection::levelName(d.reserve.level));
+    w.key("loadInhibited"); w.boolean(d.reserve.loadInhibited);
+    w.key("enforce");
+    w.open('{');
+    w.key("load");  w.boolean(d.reserve.enforceLoad);
+    w.key("sleep"); w.boolean(d.reserve.enforceSleep);
+    w.key("fet");   w.boolean(d.reserve.enforceFet);
+    w.close('}');
+    w.key("lastEvent");
+    if (d.reserve.eventAgeS < 0) {
+        w.null();
+    }
+    else {
+        w.open('{');
+        w.key("ageS"); w.integer(d.reserve.eventAgeS);
+        w.key("text"); w.string(d.reserve.event);
+        w.close('}');
+    }
+    w.close('}');
     w.key("link");
     w.open('{');
     w.key("rssi");   w.integer(d.link.rssi);

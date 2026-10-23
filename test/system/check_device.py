@@ -230,6 +230,51 @@ def test_bmsparam(base, broker, topic, influx, db, admin_password, read_only):
     check("BmsParam point arrives in InfluxDB", n >= 1, n)
 
 
+def test_reserve(base):
+    """Battery reserve policy on the simulator: hold the state of charge, watch the levels (bench timers)."""
+    def level():
+        return live(base)["protection"]["level"]
+
+    def sim(soc):
+        http(base, "/api/sim?soc=" + str(soc))
+
+    def load_on():
+        return live(base)["charger"]["load"]
+
+    check("/api/live has the protection block", "protection" in live(base) and "enforce" in live(base)["protection"])
+    http(base, "/api/sim?nosleep=1")          # the sleep schedule itself is checked by hand: it drops the connection
+    http(base, "/api/load", {"state": "on"})
+    sim(50)
+    check("level normal at 50 %", wait_for(lambda: level() == "normal", 40))
+    check("load on at 50 %", wait_for(lambda: load_on() is True, 10))
+
+    sim(14)                      # hardware's 15 % is not ours: 14 % does nothing
+    time.sleep(25)
+    check("14 %: software does not cut yet (margin)", level() == "normal" and load_on() is True)
+
+    sim(12)
+    check("12 %: level load-cut", wait_for(lambda: level() == "load-cut", 60))
+    check("12 %: load forced off", wait_for(lambda: load_on() is False, 45))
+    ev = live(base)["protection"]["lastEvent"]
+    check("event says who and why", ev and "[software]" in ev["text"] and "load" in ev["text"], ev)
+    status, body, _ = http(base, "/api/load", {"state": "on"})
+    check("switching on is refused while the reserve is low", status == 503 and "reserve" in body.decode().lower(), body[:100])
+    check("load stays off", load_on() is False)
+
+    sim(8)
+    check("8 %: sleep level after the delay", wait_for(lambda: level() == "sleep", 90))
+    sim(2)
+    check("2 %: level critical", wait_for(lambda: level() == "critical", 80))
+    check("critical: discharge FET off", wait_for(lambda: live(base)["bms"]["dischargeFet"] is False, 30))
+    check("critical: charge FET stays on", live(base)["bms"]["chargeFet"] is True)
+
+    sim(40)
+    check("40 %: back to normal", wait_for(lambda: level() == "normal", 150))
+    check("40 %: discharge FET on again", wait_for(lambda: live(base)["bms"]["dischargeFet"] is True, 40))
+    check("40 %: load back on (the user wanted it on)", wait_for(lambda: load_on() is True, 60))
+    http(base, "/api/sim?soc=free&nosleep=0")
+
+
 def mqtt_sub(broker, topic, count=1, timeout=10):
     try:
         out = subprocess.run(["mosquitto_sub", "-h", broker, "-t", topic, "-C", str(count), "-W", str(timeout)],
@@ -329,6 +374,8 @@ def main():
     test_ha_discovery(a.mqtt, a.ha_prefix, a.instance, topic)
     test_influx(base, a.influx, a.db)
     test_bmsparam(base, a.mqtt, topic, a.influx, a.db, a.admin_password, a.read_only or a.no_sim)
+    if not a.no_sim and not a.read_only:
+        test_reserve(base)
 
     failed = [n for n, ok in RESULTS if not ok]
     print(f"\n{len(RESULTS) - len(failed)}/{len(RESULTS)} checks passed")

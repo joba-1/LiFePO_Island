@@ -22,6 +22,9 @@ struct SimControl {
     bool bmsOnline = true;
     uint16_t chargerFaults = 0;    // or-ed into ChgSts.wFault
     uint16_t bmsFaults = 0;        // or-ed into Status.fault
+    bool noSleep = false;          // /api/sim?nosleep=1: no deep sleep (scripted tests keep their connection)
+    bool socHold = false;          // /api/sim?soc=N: the state of charge stays at socValue (0..1)
+    float socValue = 0.8f;
 };
 static SimControl simControl;
 
@@ -50,6 +53,7 @@ public:
         float amps = (chgW - loadW) / batV;
         soc += amps * dt_h / CAPACITY_AH;
         soc = soc < 0 ? 0 : (soc > 1 ? 1 : soc);
+        if (simControl.socHold) soc = simControl.socValue;
         amps_ = amps;
         tempC = 14.0f + 6.0f * sun;
     }

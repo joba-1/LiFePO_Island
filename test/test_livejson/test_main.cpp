@@ -53,6 +53,12 @@ static LiveJson::Live sample() {
     d.link.queued = 12;
     d.link.mqtt = true;
     d.link.ntp = true;
+    d.reserve.level = 1;
+    d.reserve.loadInhibited = true;
+    d.reserve.enforceLoad = true;
+    d.reserve.enforceSleep = true;
+    d.reserve.eventAgeS = 30;
+    strcpy(d.reserve.event, "[software] load off: no \"cut\"");
     return d;
 }
 
@@ -69,6 +75,9 @@ void test_full_document() {
         "\"remainAh\":220.46,\"fullAh\":272.00,\"remainWh\":2821,\"fullWh\":3481,\"cycles\":123,\"chargeFet\":true,\"dischargeFet\":true,"
         "\"cellsMv\":[3342,3338,3339,3338],\"balancing\":[false,true,false,false],"
         "\"tempsC\":[14.5,-0.5],\"tempNames\":[\"BMS board\",\"BMS probe 2\"],\"faults\":[]},"
+        "\"protection\":{\"level\":\"load-cut\",\"loadInhibited\":true,"
+        "\"enforce\":{\"load\":true,\"sleep\":true,\"fet\":false},"
+        "\"lastEvent\":{\"ageS\":30,\"text\":\"[software] load off: no \\\"cut\\\"\"}},"
         "\"link\":{\"rssi\":-83,\"ip\":\"192.168.5.222\",\"influx\":{\"code\":204,\"okAgeS\":3,"
         "\"queued\":12,\"dropped\":0},\"mqtt\":true,\"ntp\":true}}",
         out);
@@ -84,6 +93,8 @@ void test_never_seen_devices_are_null() {
     TEST_ASSERT_NOT_NULL(strstr(out, "\"bms\":{\"ageS\":null,\"id\":null,"));
     TEST_ASSERT_NOT_NULL(strstr(out, "\"time\":null"));
     TEST_ASSERT_NOT_NULL(strstr(out, "\"okAgeS\":null"));
+    TEST_ASSERT_NOT_NULL(strstr(out, "\"protection\":{\"level\":\"normal\",\"loadInhibited\":false,"));
+    TEST_ASSERT_NOT_NULL(strstr(out, "\"lastEvent\":null}"));
 }
 
 void test_load_unknown_is_null() {

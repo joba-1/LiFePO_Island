@@ -19,6 +19,7 @@ Runs on the host, no hardware. Covers the header-only logic in `include/`:
 | `test_influxbatch` | `InfluxBatch.h` | flush interval, 3/4-full trigger, retry backoff 10/20/40/60 s, drop-oldest, millis() wrap |
 | `test_livejson` | `LiveJson.h` | exact `/api/live` document, unit conversion, null blocks, truncation |
 | `test_netconfigvalidate` | `NetConfigValidate.h` | host names, ports, field copy |
+| `test_protection` | `Protection.h` | reserve ladder: margin, debounce, hysteresis, sleep delay, critical, unknown data holds the level, cell voltage witness gated by current, state across deep sleep |
 | `test_bmsparam` | `BmsParam.h` | BMS settings JSON (volts, amps, °C, `[limit, release]` pairs, balancer bits, unread document), Influx line, truncation |
 | `test_hadiscovery` | `HaDiscovery.h` | message count, exact payloads, **every message ≤ 480 bytes** (worst-case names, 32 cells, 8 NTCs), unique keys, migration targets exist |
 
