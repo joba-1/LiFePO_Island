@@ -6,7 +6,7 @@
 |---|---|
 | Device | ESP32 `lifepo_island-1`, 192.168.5.222 in the island network |
 | Access | only through the range extender `nat2` (192.168.1.239): `http://nat2:8080/` |
-| nat2 power | **today: a USB port of job4** (power only). Planned: its own USB supply. |
+| nat2 | since 2026-10-23 a Seeed XIAO ESP32-C6 (MAC `58:E6:C5:19:38:60`, external antenna) running a custom Tasmota 16 build; powered via the AMS1117 of a repurposed fan-controller board on 12 V (see below). Sources and settings: `~/project/range-extender/` |
 | Data | InfluxDB `influx:8086`, database `LiFePO_Island`; MQTT `mqtt`, `LiFePO_Island/1/#`; syslog `syslog`, host `lifepo_island-1`, app `Joba1` |
 | Dashboard | Grafana `LiFePO_Island` (uid `mYiP89N4z`) |
 | Test bench | M5Stack Atom Echo on job6 USB, env `atom_echo`, instance 9 |
@@ -51,7 +51,8 @@ curl -u admin:$PW -X POST http://nat2:8080/api/netconfig -d influxHost=influx
 ### No data in Grafana
 
 1. `ping nat2` / `curl http://nat2:8080/api/live`.
-   * nat2 does not answer: **check its power first** (job4 USB, see above).
+   * nat2 does not answer: **check its power first** (a hung C6 only recovers
+     when its 12 V is unplugged and replugged).
      On 2026-10-10 job4 was shut down and the island was dark for days. Then
      check that nat2 is associated with ax3 (`job.fritz.ssid`, 2.4 GHz).
    * nat2 answers on port 80 but 8080 does not: the island is down or has
@@ -65,27 +66,42 @@ curl -u admin:$PW -X POST http://nat2:8080/api/netconfig -d influxHost=influx
    are dropped (`dropped`).
 4. Syslog: `{host="lifepo_island-1"}` in Loki (Grafana Explore).
 
-### nat2 after a reboot or power loss (found 2026-10-13)
+### nat2 (XIAO ESP32-C6, since 2026-10-23)
 
-nat2 (Tasmota 13.2.0.2 range extender) has two traps:
+The old nat2 (ESP32-D0, Tasmota 13.2.0.2, MAC `34:86:5D:3A:53:24`) is retired.
+The C6 runs `tasmota32c6-rangeextender` (Tasmota `e1325dd`, NAPT + port map
+compiled in; the official builds have no `Rgx*` commands). Files and the full
+settings list: `~/project/range-extender/firmware/` and
+`config/nat2-settings.txt`. The ax3 DHCP reservation `nat2` -> 192.168.1.239 now
+belongs to the new MAC (backup `/root/dhcp.bak-nat2-c6` on ax3).
 
-* After a cold boot it reports `RgxNAPT ON` but forwards **nothing**, neither
-  out (no data from the island) nor in (port forwards). Toggling
-  `RgxNAPT OFF` / `RgxNAPT ON` after the Wi-Fi connect fixes it.
+Traps:
+
+* In Tasmota 16 `RgxNAPT OFF` **restarts** the chip. The old `Rule1` toggle
+  (`RgxNAPT OFF; delay 10; RgxNAPT ON` on `Wifi#Connected`) therefore loops:
+  reboot every 20-60 s. The cold-boot workaround of 13.2 is neither needed nor
+  allowed. Current rules:
+
+```
+Rule1: on Time#Minute|5 do RgxPort tcp,8080,4CEBD677F760,80 endon
+Rule2: on System#Boot do CpuFrequency 80 endon
+```
+
 * `RgxPort tcp,8080,<MAC>,80` resolves the MAC through nat2's **DHCP leases**
   when the command runs (MQTT `stat/nat2/RESULT` shows the target). A client
-  with a static IP, or one that connects later, maps to `0.0.0.0`. Up to 4.1
-  the island stored its first DHCP answer as static config, so after a power
-  loss of nat2 it was not in the lease table any more. 4.2 uses DHCP unless an
-  address is set explicitly via `/ip`.
+  with a static IP, or one that connects later, maps to `0.0.0.0`. Hence the
+  5-minute rule.
+* Power: the board's AMS1117-5.0 drops 12 V to 5 V and gets hot. Above 20 dBm
+  `WifiPower` the chip hangs until the 12 V is unplugged. Use `WifiPower 18.5`
+  (steps 17 / 18.5 / 19 / 19.5) until it runs from a 5 V USB supply.
+  `WifiPower 30` was stored as 4.4 dBm.
+* `/cm` web commands need `SetOption128 1` in v16.
+* External antenna: `/autoexec.be` sets GPIO3 low and GPIO14 high.
 
-`Rule1` on nat2 (enabled 2026-10-13; before, a rule with the IP form existed
-but was off, and the forward had once been set by hand):
-
-```
-on Wifi#Connected do backlog delay 50; RgxNAPT OFF; delay 10; RgxNAPT ON endon
-on Time#Minute|5 do RgxPort tcp,8080,4CEBD677F760,80 endon
-```
+Link logging: `/rgxlog.be` writes once a minute to InfluxDB `LiFePO_Island`,
+measurement `Nat2Link` (`host=nat2`): `island_rssi` (nat2 hears the island),
+`up_rssi`, `up_bssid` (nat2 hears ax3), `clients`, `heap`. The island's own
+reading of nat2 is `Wifi.RSSI`. Live view: `config/rssi.sh`.
 
 Check: `curl 'http://nat2/cm?cmnd=RgxClients'` (the island `4CEBD677F760`
 needs an IP there) and `mosquitto_sub -h mqtt -t stat/nat2/RESULT` while
