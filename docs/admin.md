@@ -9,7 +9,7 @@
 | nat2 | since 2026-10-23 a Seeed XIAO ESP32-C6 (MAC `58:E6:C5:19:38:60`, external antenna) running a custom Tasmota 16 build; powered via the AMS1117 of a repurposed fan-controller board on 12 V (see below). Sources and settings: `~/project/range-extender/` |
 | Data | InfluxDB `influx:8086`, database `LiFePO_Island`; MQTT `mqtt`, `LiFePO_Island/1/#`; syslog `syslog`, host `lifepo_island-1`, app `Joba1` |
 | Dashboard | Grafana `LiFePO_Island` (uid `mYiP89N4z`) |
-| Test bench | M5Stack Atom Echo on job6 USB, env `atom_echo`, instance 9 |
+| Test bench | MH-ET MiniKit (env `mhetesp32minikit_bench`, instance 8) or XIAO ESP32-C6 (`xiao_esp32c6_bench`, instance 7) on job6 USB; the Atom Echos (`atom_echo`, 9) are used for speech tests |
 | Docs | Trac `LiFePoIsland`; this directory |
 
 ## Build and flash
@@ -22,7 +22,7 @@ password manager: without it neither OTA nor the admin pages work.
 pio test -e native                         # unit tests, always first
 pio run -e mhetesp32minikit_ota -t upload  # island via nat2:8080 (OTA, admin login)
 pio run -e mhetesp32minikit_ser -t upload  # island via USB (on site)
-pio run -e atom_echo -t upload             # test bench
+pio run -e mhetesp32minikit_bench -t upload --upload-port /dev/serial/by-id/<board>   # test bench
 ```
 
 OTA with the admin password needs an `Origin: http://<host>` header: the

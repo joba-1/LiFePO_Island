@@ -11,6 +11,7 @@ depend on it):
 |---|---|---|
 | `ChgSts`, `BatParam`, `Log`, `Parameters`, `LoadParam`, `ProParam`, `Information` | `Serial`, `Version` | item fields + `Host` |
 | `Status`, `Cells`, `Hardware` | `Id`, `Version` | item fields + `Host` |
+| `BmsParam` (4.6, only after a read on request) | `Id`, `Version` | the BMS EEPROM settings in raw device units + `Host`: `Cells`, `CellOvp`/`CellOvpRelease`/`CellOvpDelay`, `CellUvp`/`CellUvpRelease`/`CellUvpDelay`, `CellOvpHigh`, `CellUvpHigh`, `HighDelays`, `PackOvp…`, `PackUvp…` (10 mV), `ChargeOcp`, `DischargeOcp` (10 mA), temperatures (0.1 K), balancer, `ShuntResistance`, `DesignCapacity`, `CellVoltage0…100` (mV) |
 | `Wifi` | `Host`, `Version` | `BSSID`, `IP`, `RSSI` |
 
 New in 4.2: each line carries its own timestamp in milliseconds
@@ -52,7 +53,9 @@ status/Hostname     status/Version   status/StartTime
 status/DBServer     status/DBPort    status/DBName    status/DBResponse
 status/Charger      10 fault bits     status/BMS   13 fault bits   (retained)
 status/Load         on / off (retained, new in 4.2)
-json/<Item>         the item JSON (same as GET /json/<Item>); json/Log retained
+json/<Item>         the item JSON (same as GET /json/<Item>); json/Log and json/BmsParam retained
+                    (json/BmsParam: only the protection levels and current limits, the 512 byte
+                    MQTT buffer does not hold more; everything: GET /api/bmsparam)
 cmd                 commands, see below
 ```
 

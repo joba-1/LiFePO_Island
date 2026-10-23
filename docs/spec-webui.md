@@ -46,6 +46,11 @@ Layout, top to bottom:
    * **Protection**: BMS charge/discharge MOSFET switches (with confirm),
      active faults as text, or "none"; the charger's nightly "PV low voltage" bit is
      shown greyed as "(night)" and does not turn the status dot amber.
+     Below that **BMS limits**: the protection thresholds stored in the BMS
+     (cell/pack under and over voltage with release voltage and delay, second
+     cell level, current and temperature limits, balancer, the voltages the
+     BMS maps to 0 … 100 % SoC) and how long ago they were read. They are not
+     polled; the button *Read from BMS* (admin login, confirm) reads them.
    * **Link**: RSSI, IP, InfluxDB (last code, age, queued lines), MQTT, NTP.
 4. Details (collapsed): JSON links, `/api/netstatus`, `/api/netconfig`,
    firmware update, IP change, breathing LED toggle, reset.
@@ -106,6 +111,36 @@ time of the last good poll.
 `charge=0|1&discharge=0|1` → `{"ok":true,"chargeFet":..,"dischargeFet":..,"msg":..}`;
 400 on missing/bad values, 503 if the BMS did not answer.
 
+### `GET /api/bmsparam`, `GET /json/BmsParam` (no login)
+
+The BMS limits as last read, converted to V/A/°C/Ah; `{"read":false}` until the
+first read after boot (they are not stored across reboots):
+
+```json
+{ "read": true, "ageS": 120, "cells": 4,
+  "cellUvp": {"V": 2.500, "releaseV": 2.700, "delayS": 2, "highV": 2.300, "highDelayS": 8},
+  "cellOvp": {"V": 3.700, "releaseV": 3.500, "delayS": 2, "highV": 3.900, "highDelayS": 2},
+  "packUvp": {"V": 9.00, "releaseV": 10.00, "delayS": 2},
+  "packOvp": {"V": 14.80, "releaseV": 14.40, "delayS": 2},
+  "dischargeOcpA": 35.00, "dischargeOcpDelayS": 2, "chargeOcpA": 35.00, "chargeOcpDelayS": 2,
+  "tempC": {"chargeOver": [60.0, 55.0], "chargeUnder": [0.0, 5.0],
+            "dischargeOver": [60.0, 55.0], "dischargeUnder": [-20.0, -15.0]},
+  "balancer": {"on": true, "whileCharging": true, "startV": 3.400, "windowMv": 20},
+  "socTableMv": [2800, 3250, 3290, 3320, 3350, 3650],
+  "designAh": 272.00, "selfDischargePct": 1.0, "shuntMOhm": 1.0, "ntcMask": 3 }
+```
+
+Temperature pairs are `[limit, release]`. The delays are what the BMS stores
+(the register map of bms-tools calls them release delays).
+
+### `POST /api/bmsparam` (admin login)
+
+Reads the settings from the BMS (factory mode, several seconds, the device does
+not answer meanwhile), then publishes them (MQTT `json/BmsParam` retained,
+InfluxDB `BmsParam`). → `{"ok":true,"msg":"BMS settings read","params":{…as above…}}`;
+503 if the BMS did not answer or answered wrongly, also if the last attempt was
+less than 30 s ago or the BMS was never seen.
+
 ### Unchanged
 
 `/json/<Item>` (`Version` is now a JSON string), `/api/netstatus` (gains
@@ -119,6 +154,7 @@ bookmarks keep working.
 * Admin functions (`/update`, `/reset`, `/ip`, `POST /api/netconfig`) need
   HTTP basic auth as before.
 * Load and MOSFET control are deliberately open (see spec.md, Decisions).
+* `POST /api/bmsparam` needs the admin login: it puts the BMS into factory mode for a few seconds.
 * The page builds the DOM with `textContent`, never `innerHTML` with data, so
   request text in `msg` (e.g. a rejected `ip` form value) cannot inject
   markup. 4.1 printed `web_msg` raw into the HTML page (reflected XSS behind

@@ -109,6 +109,7 @@ feature) and is committed **before** the build; the release commit is tagged
 
 | Version | Date | Content |
 |---|---|---|
+| 4.6.0 | 2026-10-23 | BMS protection limits (EEPROM) on request: `BmsParam` (page, `/api/bmsparam`, `/json/BmsParam`, MQTT, InfluxDB); JBD library 2.2 (31+ byte replies, result buffer size); silent bench envs for the MH-ET and the XIAO C6 |
 | 4.5.2 | 2026-10-13 | load bar back to one solid colour in steps like the SoC bar (green, amber > 75 %, red > 90 %) |
 | 4.5.1 | 2026-10-13 | load bar as a gauge: fixed gradient green → yellow → red over the full width, uncovered up to the load |
 | 4.5.0 | 2026-10-13 | load bar 0 … load output limit (`loadMaxW`) instead of the "Output ON" row; header time without "updated" |
@@ -126,7 +127,9 @@ feature) and is committed **before** the build; the release commit is tagged
 |---|---|---|
 | `mhetesp32minikit_ota` / `_ser` | MH-ET ESP32 MiniKit | the island (last build of 4.1 used this env) |
 | `esp32cam_ota` / `_ser` | ESP32-CAM | alternative board |
-| `atom_echo` | M5Stack Atom Echo | test bench, instance 9, **simulated** charger/BMS |
+| `mhetesp32minikit_bench` | MH-ET ESP32 MiniKit | test bench, instance 8, **simulated** charger/BMS, own database, bench Wi-Fi |
+| `xiao_esp32c6_bench` | Seeed XIAO ESP32-C6 | test bench, instance 7, simulated, same silent settings |
+| `atom_echo` | M5Stack Atom Echo | instance 9, simulated; the Echos are used for speech tests now |
 | `native` | host | unit tests |
 | `d1_mini_*` | ESP8266 | does not build (EEPROM API), kept for reference |
 
@@ -161,5 +164,12 @@ simulated data never mixes with the island's history.
 * **Simulator** for test builds rather than a second RS485 rig: it exercises
   the real code paths (polling, publishing, load and MOSFET switching) on any
   ESP32.
+* **BMS limits only on request** (4.6): the JBD BMS answers reads of its EEPROM
+  settings only in "factory mode", and what the BMS does meanwhile (does it keep
+  protecting the pack?) is not documented. So the island never polls them: an
+  admin presses *Read from BMS* (or `POST /api/bmsparam`), the library enters
+  factory mode, reads ~40 registers (a few seconds, the island does not answer
+  meanwhile) and leaves it again without saving. If the BMS does not confirm
+  leaving, the main loop keeps asking every 5 s. There is no write path.
 * Load and MOSFET switching stay **without login** (operational controls, also
   used by Home Assistant via MQTT); admin functions need the admin password.

@@ -221,6 +221,29 @@ public:
         return ok();
     }
 
+    // Settings as a typical LiFePO4 4S JBD BMS ships them; takes about as long as the real read
+    bool getSettings(JbdBms::Settings_t& d) {
+        if (!simControl.bmsOnline) return fail();
+        delay(2500);
+        memset(&d, 0, sizeof(d));
+        d.designCapacity = 27200; d.cycleCapacity = 27200;
+        d.cellVoltage100 = 3650; d.cellVoltage80 = 3350; d.cellVoltage60 = 3320; d.cellVoltage40 = 3290;
+        d.cellVoltage20 = 3250; d.cellVoltage0 = 2800; d.selfDischarge = 10;
+        d.packOvp = 1480; d.packOvpRelease = 1440; d.packUvp = 900; d.packUvpRelease = 1000;
+        d.cellOvp = 3700; d.cellOvpRelease = 3500; d.cellUvp = 2500; d.cellUvpRelease = 2700;
+        d.cellOvpHigh = 3900; d.cellUvpHigh = 2300;
+        d.cellUvpDelay = 2; d.cellOvpDelay = 2; d.packUvpDelay = 2; d.packOvpDelay = 2;
+        d.highDelays = 0x80 | 0x10;
+        d.chargeOcp = 3500; d.dischargeOcp = -3500; d.chargeOcpDelay = 2; d.dischargeOcpDelay = 2;
+        d.chargeOvertemp = 3331; d.chargeOvertempRelease = 3281; d.chargeUndertemp = 2731; d.chargeUndertempRelease = 2781;
+        d.dischargeOvertemp = 3331; d.dischargeOvertempRelease = 3281; d.dischargeUndertemp = 2531; d.dischargeUndertempRelease = 2581;
+        d.balanceStart = 3400; d.balanceWindow = 20; d.shuntResistance = 10; d.functionConfig = 0x0c;
+        d.ntcConfig = 3; d.cells = 4;
+        return true;
+    }
+    bool inFactory() const { return false; }
+    bool exitFactory() { return ok(); }
+
 private:
     bool ok() { delay(20); return true; }
     bool fail() { delay(200); return false; }

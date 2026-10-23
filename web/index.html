@@ -68,6 +68,10 @@ button, input[type=submit] { font: inherit; padding: 6px 14px; border-radius: 6p
   background: var(--bg); color: var(--text); cursor: pointer; }
 button:hover, input[type=submit]:hover { border-color: var(--accent); }
 label { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+.card h3 { font-size: 13px; font-weight: 600; margin: 14px 0 4px; color: var(--muted); }
+.prow { padding: 3px 0; font-variant-numeric: tabular-nums; }
+.prow span { display: block; }
+.prow span:first-child { color: var(--muted); font-size: 12px; }
 ul.faults { margin: 4px 0 0; padding-left: 18px; color: var(--bad); }
 ul.faults li.info { color: var(--muted); }
 .none { color: var(--muted); }
@@ -144,6 +148,9 @@ footer a { color: inherit; }
       <div class="btns"><button id="setFets">Set MOSFETs</button></div>
       <div style="margin-top:8px">Faults: <span id="noFaults" class="none">–</span></div>
       <ul class="faults" id="faults"></ul>
+      <h3 title="Protection thresholds stored in the BMS (EEPROM). They are not polled: press the button to read them">BMS limits <span class="age" id="parAge"></span></h3>
+      <div id="params"><span class="none">not read yet</span></div>
+      <div class="btns"><button id="readParams" title="Reads the limits from the BMS (admin login). The BMS is in factory mode for a few seconds and the device does not answer meanwhile">Read from BMS</button></div>
     </section>
     <section class="card">
       <h2>Link</h2>
@@ -165,7 +172,7 @@ footer a { color: inherit; }
         <a href="/json/BatParam">BatParam</a> · <a href="/json/Log">Log</a> ·
         <a href="/json/Parameters">Parameters</a> · <a href="/json/LoadParam">LoadParam</a> ·
         <a href="/json/ProParam">ProParam</a> · <a href="/json/Status">Status</a> ·
-        <a href="/json/Cells">Cells</a> · <a href="/json/Wifi">Wifi</a> ·
+        <a href="/json/Cells">Cells</a> · <a href="/json/BmsParam">BmsParam</a> · <a href="/json/Wifi">Wifi</a> ·
         <a href="/api/live">live</a> · <a href="/api/netstatus">netstatus</a> ·
         <a href="/api/netconfig">netconfig</a></p>
       <p>Firmware upload: <a href="/update">/update</a> (admin)</p>
@@ -361,12 +368,71 @@ async function poll() {
     render(d);
     last = d; lastOk = Date.now();
     set("poll", new Date().toLocaleTimeString());   // time of the last good poll
+    showParAge();
   } catch (e) {
     $("dot").className = "bad";
     set("poll", "device not reachable" + (lastOk ? " since " + new Date(lastOk).toLocaleTimeString() : ""));
   }
   if (!document.hidden) timer = setTimeout(poll, POLL_MS);
 }
+
+// BMS limits (read on request, see /api/bmsparam)
+let parLoaded = null;   // Date.now() of the BMS read, from the device's age
+function showParAge() {
+  if (parLoaded === null) return set("parAge", "");
+  const s = Math.round((Date.now() - parLoaded) / 1000);
+  set("parAge", s < 120 ? "read " + s + " s ago" : s < 7200 ? "read " + Math.round(s / 60) + " min ago" : "read " + Math.round(s / 3600) + " h ago");
+}
+function renderParams(p) {
+  const box = $("params");
+  box.textContent = "";
+  if (!p || !p.read) {
+    const n = document.createElement("span"); n.className = "none"; n.textContent = "not read yet"; box.append(n);
+    parLoaded = null; showParAge(); return;
+  }
+  parLoaded = Date.now() - p.ageS * 1000;
+  const lvl = (l, d) => l.V.toFixed(d) + " V (release " + l.releaseV.toFixed(d) + " V, " + l.delayS + " s)";
+  const rows = [
+    ["Cell under voltage", lvl(p.cellUvp, 3), "Discharge is switched off when one cell falls below this; it is released above the release voltage"],
+    ["Cell under voltage, 2nd level", p.cellUvp.highV.toFixed(3) + " V (" + p.cellUvp.highDelayS + " s)", "Second, lower level with its own delay"],
+    ["Pack under voltage", lvl(p.packUvp, 2), "Whole pack voltage"],
+    ["Cell over voltage", lvl(p.cellOvp, 3), "Charging is switched off above this"],
+    ["Pack over voltage", lvl(p.packOvp, 2), ""],
+    ["Current limits", p.dischargeOcpA.toFixed(1) + " A discharge / " + p.chargeOcpA.toFixed(1) + " A charge", ""],
+    ["Charge temperature", p.tempC.chargeUnder[0].toFixed(1) + " … " + p.tempC.chargeOver[0].toFixed(1) + " °C", "Charging is only allowed in this range"],
+    ["Discharge temperature", p.tempC.dischargeUnder[0].toFixed(1) + " … " + p.tempC.dischargeOver[0].toFixed(1) + " °C", ""],
+    ["Balancer", (p.balancer.on ? "on" + (p.balancer.whileCharging ? "" : " (not while charging)") : "off") + ", from " + p.balancer.startV.toFixed(3) + " V, window " + p.balancer.windowMv + " mV", ""],
+    ["Cell V at 0/20/40/60/80/100 %", p.socTableMv.map(v => (v / 1000).toFixed(2)).join(" / ") + " V", "Voltage points the BMS uses to estimate the state of charge"],
+  ];
+  for (const [label, value, tip] of rows) {
+    const row = document.createElement("div"); row.className = "prow";
+    const a = document.createElement("span"); a.textContent = label; if (tip) a.title = tip;
+    const b = document.createElement("span"); b.textContent = value;
+    row.append(a, b); box.append(row);
+  }
+  showParAge();
+}
+async function loadParams() {
+  try {
+    const r = await fetch("/api/bmsparam", { cache: "no-store" });
+    if (r.ok) renderParams(await r.json());
+  } catch (e) { /* the page works without it */ }
+}
+$("readParams").addEventListener("click", async () => {
+  if (!confirm("Read the protection limits from the BMS? It is in factory mode for a few seconds and this device does not answer meanwhile.")) return;
+  const btn = $("readParams");
+  btn.disabled = true;
+  message("Reading the BMS limits …", false);
+  try {
+    const r = await fetch("/api/bmsparam", { method: "POST" });   // the browser asks for the admin login
+    const d = await r.json().catch(() => ({ msg: "HTTP " + r.status }));
+    message(d.msg || (r.ok ? "ok" : "failed"), !r.ok);
+    if (d.params) renderParams(d.params);
+  } catch (e) {
+    message("Request failed: " + e.message, true);
+  }
+  btn.disabled = false;
+});
 
 async function post(url, body) {
   try {
@@ -388,6 +454,7 @@ $("setFets").addEventListener("click", () => {
 });
 $("ipField").addEventListener("input", () => { ipEdited = true; });
 document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
+loadParams();
 poll();
 </script>
 </body>

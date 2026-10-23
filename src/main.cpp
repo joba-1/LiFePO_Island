@@ -20,6 +20,7 @@ Specification: docs/spec.md (and docs/spec-*.md)
 
 // Pure logic, unit tested natively (pio test -e native). Included before the
 // device libraries: esmart3.h/jbdbms.h leave #pragma pack(2) active.
+#include "BmsParam.h"
 #include "Faults.h"
 #include "InfluxBatch.h"
 #include "LiveJson.h"
@@ -1151,6 +1152,77 @@ void handle_jbdCells() {
 }
 
 
+// BMS protection settings (EEPROM, readable in the BMS' factory mode): never polled, only read on
+// request (POST /api/bmsparam, admin login), because the BMS' behaviour in factory mode is not
+// documented. Published like the other device data: MQTT json/BmsParam (retained) and InfluxDB.
+JbdBms::Settings_t jbdSettings = {0};
+bool have_bmsparam = false;
+uint32_t bmsparam_ms = 0;        // millis() of the last good read
+uint32_t bmsparam_try_ms = 0;    // millis() of the last attempt (0: none yet)
+static char bmsparam_json[1600];
+
+bool json_BmsParam(char *json, size_t maxlen) {
+    uint32_t ageS = have_bmsparam ? (millis() - bmsparam_ms) / 1000 : 0;
+    return BmsParam::writeJson(json, maxlen, have_bmsparam, ageS, jbdSettings);
+}
+
+// Read the settings and publish them. false with a reason in text if not possible.
+bool read_bms_params(const char *&text) {
+    text = "BMS settings read";
+    if (!jbdHardware.id[0]) {
+        text = "BMS not seen yet";
+        return false;
+    }
+    uint32_t now = millis();
+    if (bmsparam_try_ms && now - bmsparam_try_ms < 30000) {
+        text = "Wait 30 s between reads";
+        return false;
+    }
+    bmsparam_try_ms = now ? now : 1;
+
+    slog("Reading BMS settings (factory mode)", LOG_NOTICE);
+    JbdBms::Settings_t data = {0};
+    bool ok = jbdbms.getSettings(data);
+    if (jbdbms.inFactory()) {
+        slog("BMS did not confirm leaving factory mode, retrying", LOG_ERR);   // see handle_bms_factory_guard()
+    }
+    if (!ok) {
+        text = "Reading the BMS settings failed";
+        slog(text, LOG_ERR);
+        return false;
+    }
+
+    jbdSettings = data;
+    have_bmsparam = true;
+    bmsparam_ms = millis();
+    json_BmsParam(bmsparam_json, sizeof(bmsparam_json));
+    slog(bmsparam_json);
+    static char compact[512];   // the MQTT buffer is 512 bytes: levels and current limits only
+    BmsParam::writeJson(compact, sizeof(compact), true, 0, jbdSettings, false);
+    publish_retained(MQTT_TOPIC "/json/BmsParam", compact);
+    static char line[1024];
+    if (BmsParam::influxLine(line, sizeof(line), (const char *)jbdHardware.id, VERSION, WiFi.getHostname(), data)) {
+        postInflux(line);
+    }
+    return true;
+}
+
+// If the BMS did not confirm that it left factory mode, keep asking until it does
+void handle_bms_factory_guard() {
+    static const uint32_t interval = 5000;
+    static uint32_t prev = 0;
+    if (jbdbms.inFactory() && millis() - prev >= interval) {
+        prev = millis();
+        if (jbdbms.exitFactory()) {
+            slog("BMS left factory mode", LOG_NOTICE);
+        }
+        else {
+            slog("BMS still in factory mode", LOG_ERR);
+        }
+    }
+}
+
+
 char web_msg[256] = "";  // one-shot message for the web page (/api/live "msg"), raw text
 bool changeIp = false;   // if true, ip changes after display of root url
 IPAddress ip;            // the ip to change to (use DHCP if 0)
@@ -1666,6 +1738,29 @@ void setup_webserver() {
     web_server.on("/json/Wifi", []() {
         json_Wifi(msg, sizeof(msg), lastBssid, lastRssi);
         web_server.send(200, "application/json", msg);
+    });
+
+    // BMS protection settings: the last read ({"read":false} if none yet), no login
+    web_server.on("/json/BmsParam", HTTP_GET, []() {
+        json_BmsParam(bmsparam_json, sizeof(bmsparam_json));
+        send_json(200, bmsparam_json);
+    });
+
+    web_server.on("/api/bmsparam", HTTP_GET, []() {
+        json_BmsParam(bmsparam_json, sizeof(bmsparam_json));
+        send_json(200, bmsparam_json);
+    });
+
+    // Read them from the BMS (several seconds, the device does not answer meanwhile): admin login
+    web_server.on("/api/bmsparam", HTTP_POST, []() {
+        if (!admin_ok()) return;
+        const char *text;
+        bool ok = read_bms_params(text);
+        char esc[96];
+        TextEscape::json(esc, sizeof(esc), text);
+        json_BmsParam(bmsparam_json, sizeof(bmsparam_json));
+        String out = String("{\"ok\":") + (ok ? "true" : "false") + ",\"msg\":\"" + esc + "\",\"params\":" + bmsparam_json + "}";
+        send_json(ok ? 200 : 503, out.c_str());
     });
 
 
@@ -2351,6 +2446,7 @@ void loop() {
         handle_breathe();  // health indicator
     }
 
+    handle_bms_factory_guard();
     handle_load_button(handle_load_led());
     web_server.handleClient();
     if (should_reboot && (int32_t)(millis() - reboot_at) >= 0) {

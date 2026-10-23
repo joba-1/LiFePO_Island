@@ -110,9 +110,14 @@ since WiFi is needed for Influx anyways, it is used for other stuff as well:
   `POST /api/mosfets`; the old form endpoints still work.
 * InfluxDB writes are batched (one POST every 5 s, retried with backoff, ms
   timestamps) instead of one POST per change.
-* `pio test -e native` runs the unit tests; env `atom_echo` builds a
-  simulator firmware for an M5Stack Atom Echo test bench, and
-  `test/system/check_device.py` tests a running device.
+* `pio test -e native` runs the unit tests; envs `mhetesp32minikit_bench` and
+  `xiao_esp32c6_bench` build a silent simulator firmware for the test bench
+  (own instance, database and Wi-Fi), and `test/system/check_device.py` tests a
+  running device.
+* The protection limits stored in the BMS (cell/pack under and over voltage,
+  current and temperature limits, balancer) can be read on request from the
+  page (*Read from BMS*, admin login) or `POST /api/bmsparam`; they are
+  published as `BmsParam` (see docs/spec-webui.md).
 * JSON now carries `"Version"` as a string.
 * Home Assistant MQTT discovery: device `LiFePO_Island <instance>` with 26
   entities; migration of the former hand-written YAML entities with

@@ -15,6 +15,7 @@ Needs only the Python standard library plus mosquitto_pub/mosquitto_sub for
 the MQTT checks. Exit code 0 = all checks passed.
 """
 import argparse
+import base64
 import configparser
 import json
 import os
@@ -34,11 +35,13 @@ def check(name, ok, detail=""):
     return ok
 
 
-def http(base, path, data=None, timeout=10):
-    """Return (status, body bytes, content type)."""
+def http(base, path, data=None, timeout=10, auth=None):
+    """Return (status, body bytes, content type). auth: "user:password" for basic auth."""
     url = base + path
     body = urllib.parse.urlencode(data).encode() if data is not None else None
     req = urllib.request.Request(url, data=body, method="POST" if data is not None else "GET")
+    if auth:
+        req.add_header("Authorization", "Basic " + base64.b64encode(auth.encode()).decode())
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.status, r.read(), r.headers.get("Content-Type", "")
@@ -169,6 +172,64 @@ def test_sim(base):
     check("setup_LiFePO wrote parameters at most once per boot", s["paramWrites"] <= 2, s)
 
 
+def test_bmsparam(base, broker, topic, influx, db, admin_password, read_only):
+    status, body, _ = http(base, "/api/bmsparam")
+    try:
+        doc = json.loads(body)
+    except ValueError:
+        doc = {}
+    check("GET /api/bmsparam is JSON with 'read'", status == 200 and "read" in doc, body[:80])
+    status, body, _ = http(base, "/json/BmsParam")
+    check("GET /json/BmsParam is the same document", status == 200 and "read" in json.loads(body or "{}"))
+    if read_only:
+        return   # reading puts the BMS into factory mode: never on a real island by script
+
+    locked = get_json(base, "/api/netstatus")[1]["device"].get("adminLock", False)
+    if locked:
+        status, body, _ = http(base, "/api/bmsparam", {})
+        check("POST /api/bmsparam without login -> 401", status == 401, status)
+    if locked and not admin_password:
+        print("SKIP BMS settings read (device is locked: pass --admin-password)")
+        return
+    auth = ("admin:" + admin_password) if locked else None
+
+    t0 = time.time()
+    status, body, _ = http(base, "/api/bmsparam", {}, timeout=30, auth=auth)
+    r = json.loads(body) if body[:1] == b"{" else {}
+    p = r.get("params", {})
+    check("POST /api/bmsparam reads the settings", status == 200 and r.get("ok") and p.get("read"), body[:120])
+    check("the read takes seconds (factory mode), not milliseconds", time.time() - t0 > 1, round(time.time() - t0, 1))
+    if not p.get("read"):
+        return
+    check("cell under voltage level and release are sane",
+          2.0 <= p["cellUvp"]["V"] < p["cellUvp"]["releaseV"] <= 3.4, p["cellUvp"])
+    check("pack levels agree with the cell count",
+          p["packUvp"]["V"] <= p["cells"] * p["cellUvp"]["releaseV"] and p["packOvp"]["V"] >= p["cells"] * 3.0, p)
+    check("discharge limit is positive amps", 0 < p["dischargeOcpA"] < 500, p["dischargeOcpA"])
+    check("temperature pairs [limit, release]", all(len(v) == 2 for v in p["tempC"].values()), p["tempC"])
+    check("SoC table rises", p["socTableMv"] == sorted(p["socTableMv"]), p["socTableMv"])
+
+    status, body, _ = http(base, "/api/bmsparam")
+    d = json.loads(body)
+    check("GET after the read shows it (ageS small)", d.get("read") and d.get("ageS", 99) < 10, body[:80])
+    status, body, _ = http(base, "/api/bmsparam", {}, timeout=30, auth=auth)
+    check("a second read within 30 s is refused -> 503", status == 503 and "30 s" in body.decode(), body[:80])
+
+    check("MQTT json/BmsParam retained", len(mqtt_sub(broker, topic + "/json/BmsParam", 1, 5)) == 1)
+    q = "SELECT COUNT(CellUvp) FROM BmsParam WHERE time > now() - 5m"
+    n = 0
+    for _ in range(8):
+        try:
+            series = influx_query(influx, db, q)
+            n = series[0]["values"][0][1] if series else 0
+        except (KeyError, IndexError, TypeError, ValueError, OSError):
+            n = 0
+        if n:
+            break
+        time.sleep(3)
+    check("BmsParam point arrives in InfluxDB", n >= 1, n)
+
+
 def mqtt_sub(broker, topic, count=1, timeout=10):
     try:
         out = subprocess.run(["mosquitto_sub", "-h", broker, "-t", topic, "-C", str(count), "-W", str(timeout)],
@@ -251,7 +312,9 @@ def main():
     ap.add_argument("--mqtt", default="mqtt")
     ap.add_argument("--ha-prefix", default="homeassistant_bench", help="HA discovery prefix")
     ap.add_argument("--no-sim", action="store_true", help="device has real charger/BMS")
-    ap.add_argument("--read-only", action="store_true", help="no switching")
+    ap.add_argument("--read-only", action="store_true", help="no switching, no BMS settings read")
+    ap.add_argument("--admin-password", default=os.environ.get("ADMIN_PASSWORD", ""),
+                    help="admin password of the device (default: $ADMIN_PASSWORD)")
     a = ap.parse_args()
     base = "http://" + a.host
     topic = "LiFePO_Island/" + a.instance
@@ -265,6 +328,7 @@ def main():
     test_mqtt(base, a.mqtt, topic, a.read_only)
     test_ha_discovery(a.mqtt, a.ha_prefix, a.instance, topic)
     test_influx(base, a.influx, a.db)
+    test_bmsparam(base, a.mqtt, topic, a.influx, a.db, a.admin_password, a.read_only or a.no_sim)
 
     failed = [n for n, ok in RESULTS if not ok]
     print(f"\n{len(RESULTS) - len(failed)}/{len(RESULTS)} checks passed")
