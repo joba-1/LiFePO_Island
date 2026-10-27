@@ -25,6 +25,7 @@ struct SimControl {
     bool noSleep = false;          // /api/sim?nosleep=1: no deep sleep (scripted tests keep their connection)
     bool socHold = false;          // /api/sim?soc=N: the state of charge stays at socValue (0..1)
     float socValue = 0.8f;
+    int16_t loadW = -1;            // /api/sim?loadw=N: fixed load power while the load is on (-1: the default 22 W wave)
 };
 static SimControl simControl;
 
@@ -48,7 +49,7 @@ public:
         bool canCharge = (mosfets & JbdBms::MOSFET_CHARGE) && soc < 0.995f;
         chgW = canCharge ? 320.0f * sun : 0;
         bool canLoad = load && (mosfets & JbdBms::MOSFET_DISCHARGE) && soc > 0.10f;
-        loadW = canLoad ? 22.0f + 3.0f * sinf(now / 7000.0f) : 0;
+        loadW = !canLoad ? 0 : simControl.loadW >= 0 ? simControl.loadW : 22.0f + 3.0f * sinf(now / 7000.0f);
         batV = 12.8f + 0.8f * soc + (chgW - loadW) / 1000.0f;
         float amps = (chgW - loadW) / batV;
         soc += amps * dt_h / CAPACITY_AH;

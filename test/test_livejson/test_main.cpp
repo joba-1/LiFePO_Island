@@ -58,6 +58,10 @@ static LiveJson::Live sample() {
     d.reserve.socOffset = 12;
     d.reserve.enforceLoad = true;
     d.reserve.enforceSleep = true;
+    d.reserve.idleThresholdW = 15;
+    d.reserve.idleMinutes = 30;
+    d.reserve.idleWindowS = 640;
+    d.reserve.idleMeanDeciW = 63;
     d.reserve.eventAgeS = 30;
     strcpy(d.reserve.event, "[software] load off: no \"cut\"");
     return d;
@@ -78,6 +82,7 @@ void test_full_document() {
         "\"tempsC\":[14.5,-0.5],\"tempNames\":[\"BMS board\",\"BMS probe 2\"],\"faults\":[]},"
         "\"protection\":{\"level\":\"load-cut\",\"loadInhibited\":true,\"socOffset\":12,"
         "\"enforce\":{\"load\":true,\"sleep\":true,\"fet\":false},"
+        "\"idleOff\":{\"thresholdW\":15,\"minutes\":30,\"windowS\":640,\"meanW\":6.3},"
         "\"lastEvent\":{\"ageS\":30,\"text\":\"[software] load off: no \\\"cut\\\"\"}},"
         "\"link\":{\"rssi\":-83,\"ip\":\"192.168.5.222\",\"influx\":{\"code\":204,\"okAgeS\":3,"
         "\"queued\":12,\"dropped\":0},\"mqtt\":true,\"ntp\":true}}",

@@ -20,6 +20,7 @@ Runs on the host, no hardware. Covers the header-only logic in `include/`:
 | `test_livejson` | `LiveJson.h` | exact `/api/live` document, unit conversion, null blocks, truncation |
 | `test_netconfigvalidate` | `NetConfigValidate.h` | host names, ports, field copy |
 | `test_protection` | `Protection.h` | reserve ladder: margin, debounce, hysteresis, sleep delay, critical, unknown data holds the level, cell voltage witness with sag correction, counter offset (learned at a voltage cut, release waits, cleared when full), persisted state (round trip, garbage after power-on rejected, restart keeps the cut) |
+| `test_idleoff` | `IdleOff.h` | idle switch-off: off after the time, pulsing idle counts as idle, use keeps it on and restarts the window, load off / stale data, 0 = never, limits |
 | `test_bmsparam` | `BmsParam.h` | BMS settings JSON (volts, amps, °C, `[limit, release]` pairs, balancer bits, unread document), Influx line, truncation |
 | `test_hadiscovery` | `HaDiscovery.h` | message count, exact payloads, **every message ≤ 480 bytes** (worst-case names, 32 cells, 8 NTCs), unique keys, migration targets exist |
 
@@ -121,6 +122,7 @@ has power. So:
 
 | Date | Version | Unit | Bench | Island | Notes |
 |---|---|---|---|---|---|
+| 2026-10-27 | 5.1.0 | 97/97 | 105/105 (`check_device.py`, MH-ET `mhetesp32minikit_bench`, idle switch-off with 1 min and simulated 22 W / 5 W load) | see below | idle switch-off (`/api/idleoff`, `IdleOff.h`) |
 | 2026-10-27 | 5.0.0 | 86/86 | 97/97 (`check_device.py`, MH-ET `mhetesp32minikit_bench`, reserve ladder down to critical, restart in critical) | 49/49 read-only, OTA via nat2:8080 | protection state survives restarts (RTC_NOINIT), counter offset, discharge FET re-check |
 | 2026-10-23 | 4.6.0 | 56/56 | 77/77 (`check_device.py`, MH-ET `mhetesp32minikit_bench`, includes BMS settings read, MQTT, InfluxDB) | not deployed | BmsParam; JBD library 2.2 (host tests with a fake BMS) |
 | 2026-10-13 | 4.2.0 | 44/44 | 63/63 (`check_device.py`, Atom Echo) | 47/47 read-only, OTA via nat2:8080 | HA migration done: 12 entities adopted, 134,813 recorder states rescaled |

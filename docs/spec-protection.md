@@ -104,7 +104,7 @@ MQTT has `null` for soc and packV, and the Influx point has no `Soc`, `CellMin` 
 
 Sources: `software` (this policy), `charger` (a load change this device did not command: its own protection, a
 schedule or the switch on the charger; the line says if the charger reports battery low voltage), `web`, `mqtt`,
-`button` (refused "load on" requests). Wake-ups: `PROTECTION woke from deep sleep after N min, level ...`.
+`button` (refused "load on" requests), `idle` (idle switch-off, below). Wake-ups: `PROTECTION woke from deep sleep after N min, level ...`.
 
 ## What is enforced (build flags)
 
@@ -128,6 +128,27 @@ power-up: not yet known).
 
 At `critical` the discharge FET command is repeated (every 30 s) while the BMS reports the discharge FET on: after a
 BMS reset, or when the BMS's own protection had it off at the time of the first command, so that no command was sent.
+
+## Idle switch-off (5.1.0)
+
+The inverter alone draws 10-11 W (Dec 2025 / Jan 2026, nothing plugged in) or pulses 0 / 11 W (about 6 W mean,
+Oct 2026), about 250 Wh a day, while the island yields only 135-160 Wh a day in December and January. So the load
+also goes off when nothing uses it: the mean load power (charger `LoadPower`) stays below `thresholdW` (15 W) for
+`minutes` (30). The mean is taken over the window, so the inverter's pulses count as idle; while the mean is at or
+above the threshold (checked from `settleS` = 120 s on) the window starts again, so the load goes off about
+`minutes` after the last use (an e-bike or tool charger that has finished). Readings without fresh charger data
+are not counted. Logic: `include/IdleOff.h` (unit tests `test_idleoff`).
+
+The switch-off counts as the user's wish "off" (source `idle`): the reserve release does not switch the load on
+again. Switching it on (page, MQTT, Home Assistant, button) starts a new window. The event is
+`[idle] load off: nothing in use: mean 6.3 W, below 15 W for 30 min`, in the same four places as the others.
+
+Settings: build flags `IDLE_OFF_W`, `IDLE_OFF_MIN`, `IDLE_OFF_SETTLE_S` are the defaults; `POST /api/idleoff`
+(admin) stores `thresholdW` (1-500) and `minutes` (0 = never, up to 1440) in NVS (namespace `idleoff`).
+
+A winter simulation (Oct 2025 - Mar 2026, measured yield, 3.48 kWh, reserve policy as above) behind this: a
+permanent 6 W load needs no cut at all (lowest 34 %), 12 W is cut for 48 days, 24 W for 94 days. A better
+low-light MPPT would add only 4-8 days; the idle draw is the lever.
 
 ## Deep sleep
 

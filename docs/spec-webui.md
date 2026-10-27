@@ -88,6 +88,7 @@ time of the last good poll.
   "protection": {
     "level": "normal", "loadInhibited": false,
     "enforce": {"load": true, "sleep": true, "fet": false},
+    "idleOff": {"thresholdW": 15, "minutes": 30, "windowS": 640, "meanW": 6.3},
     "lastEvent": {"ageS": 30, "text": "[software] load off: ..."}
   },
   "link": {
@@ -149,6 +150,12 @@ InfluxDB `BmsParam`). → `{"ok":true,"msg":"BMS settings read","params":{…as 
 503 if the BMS did not answer or answered wrongly, also if the last attempt was
 less than 30 s ago or the BMS was never seen.
 
+### `GET /api/idleoff` (no login), `POST /api/idleoff` (admin login)
+
+Idle switch-off (spec-protection.md): `{"thresholdW":15,"minutes":30,"windowS":640,"meanW":6.3}`.
+POST `thresholdW=1..500&minutes=0..1440` (0 = never) stores the settings in NVS and answers the same document;
+400 on bad values, 500 if NVS failed.
+
 ### Unchanged
 
 `/json/<Item>` (`Version` is now a JSON string), `/api/netstatus` (gains
@@ -159,7 +166,7 @@ bookmarks keep working.
 
 ## Security
 
-* Admin functions (`/update`, `/reset`, `/ip`, `POST /api/netconfig`) need
+* Admin functions (`/update`, `/reset`, `/ip`, `POST /api/netconfig`, `POST /api/idleoff`) need
   HTTP basic auth as before.
 * Load and MOSFET control are deliberately open (see spec.md, Decisions).
 * `POST /api/bmsparam` needs the admin login: it puts the BMS into factory mode for a few seconds.

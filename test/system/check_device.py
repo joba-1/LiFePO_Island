@@ -370,6 +370,39 @@ def test_influx(base, server, db):
     check("points carry ms timestamps", any(t % 1000 for t in times), times[:3])
 
 
+def test_idle_off(base, admin_password=""):
+    """Idle switch-off on the simulator: the load goes off when its mean power stays below the threshold."""
+    status, cfg = get_json(base, "/api/idleoff")
+    check("GET /api/idleoff has threshold and minutes", status == 200 and "thresholdW" in cfg and "minutes" in cfg, cfg)
+    check("/api/live protection.idleOff", "idleOff" in live(base)["protection"])
+    locked = get_json(base, "/api/netstatus")[1]["device"].get("adminLock", False)
+    if locked and not admin_password:
+        print("SKIP idle switch-off (device is locked: pass --admin-password)")
+        return
+    auth = ("admin:" + admin_password) if locked else None
+    status, _, _ = http(base, "/api/idleoff", {"thresholdW": 0}, auth=auth)
+    check("POST /api/idleoff thresholdW=0 -> 400", status == 400)
+
+    def load_on():
+        return live(base)["charger"]["load"]
+
+    http(base, "/api/sim?soc=50&loadw=22")    # reserve normal, something in use
+    http(base, "/api/load", {"state": "on"})
+    status, _, _ = http(base, "/api/idleoff", {"thresholdW": 15, "minutes": 1}, auth=auth)
+    check("POST /api/idleoff thresholdW=15&minutes=1", status == 200)
+    time.sleep(100)
+    check("22 W in use: the load stays on", load_on() is True)
+    http(base, "/api/sim?loadw=5")            # the e-bike is full, the inverter idles
+    check("5 W idle: load off after about a minute", wait_for(lambda: load_on() is False, 150, 5))
+    ev = live(base)["protection"]["lastEvent"]
+    check("event says idle and why", ev and ev["text"].startswith("[idle] load off: nothing in use"), ev)
+
+    http(base, "/api/idleoff", {"thresholdW": cfg["thresholdW"], "minutes": cfg["minutes"]}, auth=auth)
+    http(base, "/api/sim?soc=free&loadw=-1")
+    http(base, "/api/load", {"state": "on"})
+    check("settings restored", get_json(base, "/api/idleoff")[1]["minutes"] == cfg["minutes"])
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--host", default="lifepo_island-9", help="device host[:port]")
@@ -398,6 +431,7 @@ def main():
     test_bmsparam(base, a.mqtt, topic, a.influx, a.db, a.admin_password, a.read_only or a.no_sim)
     if not a.no_sim and not a.read_only:
         test_reserve(base, a.admin_password)
+        test_idle_off(base, a.admin_password)
 
     failed = [n for n, ok in RESULTS if not ok]
     print(f"\n{len(RESULTS) - len(failed)}/{len(RESULTS)} checks passed")

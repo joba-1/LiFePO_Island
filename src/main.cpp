@@ -1287,6 +1287,25 @@ uint32_t prot_extra_dt_s = 0;          // seconds asleep, added to the next eval
 bool prot_resume_pending = false;
 bool prot_fet_cut = false;             // the discharge FET was switched off by this software
 
+// ---- Idle switch-off: include/IdleOff.h ----
+// The inverter alone draws about 10 W, more than the panel yields on a winter day. When the load output is on
+// and nothing uses it (mean below the threshold for the set minutes), the load goes off. Defaults are build
+// flags, the settings live in NVS (POST /api/idleoff).
+#ifndef IDLE_OFF_W
+    #define IDLE_OFF_W 15
+#endif
+#ifndef IDLE_OFF_MIN
+    #define IDLE_OFF_MIN 30
+#endif
+#ifndef IDLE_OFF_SETTLE_S
+    #define IDLE_OFF_SETTLE_S 120
+#endif
+#include "IdleOff.h"
+#if defined(ESP32)
+#include <Preferences.h>
+#endif
+IdleOff::Watch idle_off;
+
 #if defined(ESP32)
 // Survives deep sleep and software resets (restart, OTA, watchdog, crash), not a power cycle. RTC_DATA_ATTR would
 // be reset to its initial value by the bootloader on every boot that is not a wake-up from deep sleep.
@@ -1476,6 +1495,10 @@ void fill_live(LiveJson::Live &d) {
     r.enforceLoad = PROT_ENFORCE_LOAD;
     r.enforceSleep = PROT_ENFORCE_SLEEP;
     r.enforceFet = PROT_ENFORCE_FET;
+    r.idleThresholdW = idle_off.config().thresholdW;
+    r.idleMinutes = idle_off.config().minutes;
+    r.idleWindowS = idle_off.windowS();
+    r.idleMeanDeciW = idle_off.meanDeciW();
     r.eventAgeS = prot_event_ms ? (int32_t)((now - prot_event_ms) / 1000) : -1;
     snprintf(r.event, sizeof(r.event), "%s", prot_event_text);
 
@@ -1810,6 +1833,65 @@ void handle_protection() {
     }
 }
 
+// Idle settings: build-flag defaults, NVS on top (namespace "idleoff")
+IdleOff::Config idle_off_defaults() {
+    IdleOff::Config c;
+    c.thresholdW = IDLE_OFF_W;
+    c.minutes = IDLE_OFF_MIN;
+    c.settleS = IDLE_OFF_SETTLE_S;
+    return c;
+}
+
+void idle_off_load() {
+    IdleOff::Config c = idle_off_defaults();
+#if defined(ESP32)
+    Preferences p;
+    if (p.begin("idleoff", true)) {
+        c.thresholdW = p.getUShort("w", c.thresholdW);
+        c.minutes = p.getUShort("min", c.minutes);
+        p.end();
+    }
+    if (!IdleOff::valid(c)) c = idle_off_defaults();
+#endif
+    idle_off.configure(c);
+}
+
+bool idle_off_save(const IdleOff::Config &c) {
+#if defined(ESP32)
+    Preferences p;
+    if (!p.begin("idleoff", false)) return false;
+    bool ok = p.putUShort("w", c.thresholdW) == sizeof(uint16_t) && p.putUShort("min", c.minutes) == sizeof(uint16_t);
+    p.end();
+    return ok;
+#else
+    return false;
+#endif
+}
+
+// Every 10 s: load off when nothing has used it for a while (the user's wish becomes "off" too, so the reserve
+// release does not switch it on again)
+void handle_idle_off() {
+    static const uint32_t interval = 10000;
+    static uint32_t prev = 0;
+    uint32_t now = millis();
+    if (now - prev < interval) return;
+    uint32_t dtS = prev ? (now - prev) / 1000 : 0;
+    prev = now;
+    bool fresh = chargerHealth.seen && now - chargerHealth.ok_ms < 30000;
+    if (!idle_off.update(load_state == 1, fresh, es3ChgSts.wLoadPower, dtS)) return;
+    const char *text;
+    char why[120];
+    unsigned mean = idle_off.lastMeanDeciW();
+    snprintf(why, sizeof(why), "nothing in use: mean %u.%u W, below %u W for %u min",
+        mean / 10, mean % 10, idle_off.config().thresholdW, idle_off.config().minutes);
+    if (load_command(false, "idle", text)) {
+        protection_event("idle", "load off", why);
+    }
+    else {
+        slog("IDLE could not switch the load off: the charger does not answer", LOG_ERR);
+    }
+}
+
 // Deep sleep schedule at low charge: awake for PROT_AWAKE_S after every wake-up, then asleep for sleepS.
 // The sleep is announced first (event, MQTT, InfluxDB go out), then taken a little later.
 void handle_protection_sleep() {
@@ -1979,7 +2061,9 @@ void setup_webserver() {
     });
 
     // Test builds only: GET /api/sim?charger=0|1&bms=0|1&chargerFaults=N&bmsFaults=N&soc=<0..100|free>&nosleep=0|1
+    //                   &loadw=<W|-1>
     web_server.on("/api/sim", HTTP_GET, []() {
+        if (web_server.hasArg("loadw")) simControl.loadW = web_server.arg("loadw").toInt();
         if (web_server.hasArg("charger")) simControl.chargerOnline = web_server.arg("charger") != "0";
         if (web_server.hasArg("bms")) simControl.bmsOnline = web_server.arg("bms") != "0";
         if (web_server.hasArg("chargerFaults")) simControl.chargerFaults = web_server.arg("chargerFaults").toInt();
@@ -2236,6 +2320,36 @@ void setup_webserver() {
     web_server.on("/api/netconfig", HTTP_POST, []() {
         if (!admin_ok()) return;
         handle_netconfig_post();
+    });
+
+    // Idle switch-off: GET the settings, POST thresholdW=1..500&minutes=0..1440 (0 = never; stored in NVS)
+    static auto idleoff_json = []() {
+        char buf[120];
+        unsigned mean = idle_off.meanDeciW();
+        snprintf(buf, sizeof(buf), "{\"thresholdW\":%u,\"minutes\":%u,\"windowS\":%lu,\"meanW\":%u.%u}",
+            idle_off.config().thresholdW, idle_off.config().minutes, (unsigned long)idle_off.windowS(),
+            mean / 10, mean % 10);
+        send_json(200, buf);
+    };
+    web_server.on("/api/idleoff", HTTP_GET, []() { idleoff_json(); });
+    web_server.on("/api/idleoff", HTTP_POST, []() {
+        if (!admin_ok()) return;
+        IdleOff::Config c = idle_off.config();
+        if (web_server.hasArg("thresholdW")) c.thresholdW = web_server.arg("thresholdW").toInt();
+        if (web_server.hasArg("minutes")) c.minutes = web_server.arg("minutes").toInt();
+        if (!IdleOff::valid(c)) {
+            send_json(400, "{\"ok\":false,\"error\":\"thresholdW 1..500, minutes 0..1440\"}");
+            return;
+        }
+        if (!idle_off_save(c)) {
+            send_json(500, "{\"ok\":false,\"error\":\"store failed\"}");
+            return;
+        }
+        idle_off.configure(c);
+        char line[80];
+        snprintf(line, sizeof(line), "Idle switch-off: below %u W for %u min (0 = never)", c.thresholdW, c.minutes);
+        slog(line, LOG_NOTICE);
+        idleoff_json();
     });
 
     // Catch all page
@@ -2677,6 +2791,7 @@ void setup() {
     syslog.appName("Joba1");
     syslog.defaultPriority(LOG_KERN);
     prot_restore_rtc();                // battery reserve state across deep sleep and restarts
+    idle_off_load();
 
     if (HEALTH_LED_PIN >= 0) digitalWrite(HEALTH_LED_PIN, HEALTH_LED_OFF);
 
@@ -2809,6 +2924,7 @@ void loop() {
     handle_bms_factory_guard();
     handle_load_button(handle_load_led());
     handle_protection();
+    handle_idle_off();
     handle_protection_sleep();
     web_server.handleClient();
     if (should_reboot && (int32_t)(millis() - reboot_at) >= 0) {

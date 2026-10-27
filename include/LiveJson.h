@@ -62,6 +62,10 @@ struct Reserve {
     bool     loadInhibited = false;
     uint8_t  socOffset = 0;         ///< points the BMS counter is known to read high
     bool     enforceLoad = false, enforceSleep = false, enforceFet = false;
+    uint16_t idleThresholdW = 0;    ///< IdleOff: load off after idleMinutes below this mean power
+    uint16_t idleMinutes = 0;       ///< 0: idle switch-off disabled
+    uint32_t idleWindowS = 0;       ///< current window
+    uint32_t idleMeanDeciW = 0;     ///< mean load power of the window, 0.1 W
     int32_t  eventAgeS = -1;        ///< -1: no event since boot
     char     event[200] = "";
 };
@@ -208,6 +212,13 @@ inline bool write(char* out, size_t cap, const Live& d) {
     w.key("load");  w.boolean(d.reserve.enforceLoad);
     w.key("sleep"); w.boolean(d.reserve.enforceSleep);
     w.key("fet");   w.boolean(d.reserve.enforceFet);
+    w.close('}');
+    w.key("idleOff");
+    w.open('{');
+    w.key("thresholdW"); w.integer(d.reserve.idleThresholdW);
+    w.key("minutes");    w.integer(d.reserve.idleMinutes);
+    w.key("windowS");    w.integer((long)d.reserve.idleWindowS);
+    w.key("meanW");      w.fixed((long)d.reserve.idleMeanDeciW, 1);
     w.close('}');
     w.key("lastEvent");
     if (d.reserve.eventAgeS < 0) {

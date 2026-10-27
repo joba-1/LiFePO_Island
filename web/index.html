@@ -149,6 +149,7 @@ footer a { color: inherit; }
       <div style="margin-top:8px">Faults: <span id="noFaults" class="none">–</span></div>
       <ul class="faults" id="faults"></ul>
       <div class="row" style="margin-top:8px"><span title="Battery reserve policy: charger and BMS cut the load first, this software follows with a margin, and decides when it comes back and when the ESP sleeps">Reserve policy</span><span id="prot">–</span></div>
+      <div class="row"><span title="The load goes off when nothing uses it: mean load power below the threshold for the set time (the inverter alone draws about 10 W). Settings: POST /api/idleoff">Idle switch-off</span><span id="idleOff">–</span></div>
       <div class="none" id="protEvent" style="font-size:12px"></div>
       <h3 title="Protection thresholds stored in the BMS (EEPROM). They are not polled: press the button to read them">BMS limits <span class="age" id="parAge"></span></h3>
       <div id="params"><span class="none">not read yet</span></div>
@@ -357,6 +358,9 @@ function render(d) {
     set("prot", (names[pr.level] || pr.level) + (pr.socOffset ? " (BMS counter " + pr.socOffset + " points high)" : ""));
     $("prot").className = pr.level === "normal" ? "" : "neg";
     $("prot").title = "Enforced by this software: load " + (pr.enforce.load ? "yes" : "no") + ", sleep " + (pr.enforce.sleep ? "yes" : "no") + ", discharge FET " + (pr.enforce.fet ? "yes" : "no");
+    const io = pr.idleOff;
+    if (io) set("idleOff", !io.minutes ? "never" : "below " + io.thresholdW + " W for " + io.minutes + " min"
+        + (io.windowS ? " (" + Math.floor(io.windowS / 60) + " min at " + io.meanW + " W)" : ""));
     set("protEvent", pr.lastEvent ? pr.lastEvent.text + " (" + ageText(pr.lastEvent.ageS) + ")" : "");
   }
 
