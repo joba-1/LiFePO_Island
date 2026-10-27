@@ -56,7 +56,7 @@ void test_reason_names_the_trigger() {
     TEST_ASSERT_EQUAL_STRING("normal -> load-cut: soc 13 % <= 13 %", o.reason);
     Engine c;
     for (int k = 0; k < 6; k++) o = c.update(in(50, 3080), 10);
-    TEST_ASSERT_EQUAL_STRING("normal -> load-cut: lowest cell 3080 mV < 3190 mV", o.reason);
+    TEST_ASSERT_EQUAL_STRING("normal -> load-cut: lowest cell 3080 mV < 3190 mV; counter 50 % reads 37 points high until full", o.reason);
 }
 
 void test_cell_voltage_is_an_independent_witness() {
@@ -87,7 +87,7 @@ void test_reason_shows_the_sag() {
     i.centiA = -3500;
     Output o;
     for (int k = 0; k < 6; k++) o = e.update(i, 10);
-    TEST_ASSERT_EQUAL_STRING("normal -> load-cut: lowest cell 3150 mV + 35 mV sag at 35.0 A < 3190 mV", o.reason);
+    TEST_ASSERT_EQUAL_STRING("normal -> load-cut: lowest cell 3150 mV + 35 mV sag at 35.0 A < 3190 mV; counter 60 % reads 47 points high until full", o.reason);
 }
 
 void test_sag_correction_is_capped() {
@@ -273,6 +273,123 @@ void test_custom_thresholds() {
     TEST_ASSERT_EQUAL(2, at);
 }
 
+void test_persist_round_trip() {
+    Engine a;
+    run(a, in(40, 3180), 10);                      // voltage cut, counter offset learned
+    run(a, in(30, 3180), 3);                       // a change pending
+    Persist p;
+    memset(&p, 0xa5, sizeof(p));                   // what RTC_NOINIT memory holds before the first save
+    save(p, a.state(), 3, 1800);
+    State s;
+    uint8_t flags = 0;
+    uint32_t sleepS = 0;
+    TEST_ASSERT_TRUE(load(p, s, flags, sleepS));
+    TEST_ASSERT_EQUAL(a.state().level, s.level);
+    TEST_ASSERT_EQUAL(a.state().wantLevel, s.wantLevel);
+    TEST_ASSERT_EQUAL(a.state().wantCount, s.wantCount);
+    TEST_ASSERT_EQUAL(a.state().sinceCutS, s.sinceCutS);
+    TEST_ASSERT_EQUAL(27, s.socOffset);
+    TEST_ASSERT_EQUAL(3, flags);
+    TEST_ASSERT_EQUAL(1800, sleepS);
+}
+
+void test_persist_rejects_garbage() {
+    // after a power-on the memory is random: nothing must be restored from it
+    State s;
+    s.level = LOAD_CUT;
+    Persist p;
+    uint8_t flags = 7;
+    uint32_t sleepS = 7;
+    memset(&p, 0, sizeof(p));
+    TEST_ASSERT_FALSE(load(p, s, flags, sleepS));
+    memset(&p, 0xff, sizeof(p));
+    TEST_ASSERT_FALSE(load(p, s, flags, sleepS));
+    uint32_t x = 12345;                            // pseudo random contents
+    for (int k = 0; k < 1000; k++) {
+        uint8_t* b = (uint8_t*)&p;
+        for (size_t i = 0; i < sizeof(p); i++) { x = x * 1103515245u + 12345u; b[i] = x >> 16; }
+        TEST_ASSERT_FALSE(load(p, s, flags, sleepS));
+    }
+    State good;
+    good.level = SLEEP;
+    save(p, good, 1, 0);
+    p.sinceCutS ^= 0x100;                          // one flipped bit
+    TEST_ASSERT_FALSE(load(p, s, flags, sleepS));
+    save(p, good, 1, 0);
+    p.level = 9;                                   // out of range, checksum fixed up
+    p.check = persistCheck(p);
+    TEST_ASSERT_FALSE(load(p, s, flags, sleepS));
+    TEST_ASSERT_EQUAL(LOAD_CUT, s.level);          // untouched by the failed loads
+    TEST_ASSERT_EQUAL(7, flags);
+    TEST_ASSERT_EQUAL(7, sleepS);
+}
+
+void test_restart_keeps_the_cut() {
+    // the reason for the image: a restart in load-cut must not forget the cut, or nobody switches the load on again
+    Engine a;
+    run(a, in(12), 10);
+    Persist p;
+    save(p, a.state(), 1, 0);
+    Engine b;                                      // after ESP.restart()
+    uint8_t flags = 0;
+    uint32_t sleepS = 0;
+    TEST_ASSERT_TRUE(load(p, b.state(), flags, sleepS));
+    Output o = b.update(in(12), 0);
+    TEST_ASSERT_EQUAL(LOAD_CUT, o.level);          // at once, not after a debounce
+    TEST_ASSERT_TRUE(o.loadInhibited);
+    int at;
+    o = run(b, in(31, 3300), 6, &at);
+    TEST_ASSERT_EQUAL(6, at);
+    TEST_ASSERT_TRUE(o.resumeLoad);
+}
+
+void test_counter_offset_learned_at_voltage_cut() {
+    // the counter says 40 %, the weakest cell is on the knee: the counter reads 40 - 13 = 27 points high
+    Engine e;
+    Output o;
+    for (int k = 0; k < 6; k++) o = e.update(in(40, 3180), 10);
+    TEST_ASSERT_TRUE(o.changed);
+    TEST_ASSERT_EQUAL(LOAD_CUT, o.level);
+    TEST_ASSERT_EQUAL(27, o.socOffset);
+    TEST_ASSERT_EQUAL_STRING("normal -> load-cut: lowest cell 3180 mV < 3190 mV; counter 40 % reads 27 points high until full", o.reason);
+    o = run(e, in(45, 3350), 30);                  // morning sun: voltage fine, counter 45 %, really 18 %
+    TEST_ASSERT_EQUAL(LOAD_CUT, o.level);          // no flapping: the release waits for real charge
+    int at;
+    o = run(e, in(57, 3350), 6, &at);              // 57 - 27 = 30 %
+    TEST_ASSERT_EQUAL(6, at);
+    TEST_ASSERT_EQUAL(NORMAL, o.level);
+    TEST_ASSERT_EQUAL_STRING("load-cut -> normal: soc 30 % (counter 57 % - 27) >= 30 %, lowest cell 3350 mV", o.reason);
+}
+
+void test_counter_offset_cuts_earlier_next_time() {
+    Engine e;
+    run(e, in(40, 3180), 10);                      // offset 27
+    run(e, in(60, 3300), 10);                      // released at a corrected 33 %
+    TEST_ASSERT_EQUAL(NORMAL, e.state().level);
+    int at;
+    Output o = run(e, in(40, 3300), 10, &at);      // the counter says 40 %, corrected 13 %: cut by the counter
+    TEST_ASSERT_EQUAL(6, at);
+    TEST_ASSERT_EQUAL(LOAD_CUT, o.level);
+    TEST_ASSERT_EQUAL(27, o.socOffset);            // nothing new learned
+}
+
+void test_counter_offset_cleared_when_full() {
+    Engine e;
+    run(e, in(40, 3180), 10);
+    TEST_ASSERT_EQUAL(27, e.state().socOffset);
+    Output o = run(e, in(99, 3400), 10);
+    TEST_ASSERT_EQUAL(27, o.socOffset);
+    o = run(e, in(100, 3400), 1);                  // the BMS re-synced its counter
+    TEST_ASSERT_EQUAL(0, o.socOffset);
+}
+
+void test_soc_cut_learns_no_offset() {
+    Engine e;
+    Output o = run(e, in(13, 3180), 10);           // both say so: the counter is right
+    TEST_ASSERT_EQUAL(LOAD_CUT, o.level);
+    TEST_ASSERT_EQUAL(0, o.socOffset);
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_normal_stays_normal);
@@ -298,5 +415,12 @@ int main() {
     RUN_TEST(test_leaving_critical_steps_down);
     RUN_TEST(test_state_survives_deep_sleep);
     RUN_TEST(test_custom_thresholds);
+    RUN_TEST(test_persist_round_trip);
+    RUN_TEST(test_persist_rejects_garbage);
+    RUN_TEST(test_restart_keeps_the_cut);
+    RUN_TEST(test_counter_offset_learned_at_voltage_cut);
+    RUN_TEST(test_counter_offset_cuts_earlier_next_time);
+    RUN_TEST(test_counter_offset_cleared_when_full);
+    RUN_TEST(test_soc_cut_learns_no_offset);
     return UNITY_END();
 }

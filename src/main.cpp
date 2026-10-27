@@ -1281,63 +1281,60 @@ Protection::Engine protection(protection_config());
 Protection::Output prot_out;           // last evaluation
 bool user_wants_load = true;           // what the user last asked for: only then the load is switched on again
 uint32_t last_load_cmd_ms = 0;         // when this device last switched the load (to tell the charger's own changes)
-char prot_event_text[160] = "";        // last event, for the page
+char prot_event_text[200] = "";        // last event, for the page
 uint32_t prot_event_ms = 0;            // 0: none since boot
 uint32_t prot_extra_dt_s = 0;          // seconds asleep, added to the next evaluation
 bool prot_resume_pending = false;
 bool prot_fet_cut = false;             // the discharge FET was switched off by this software
 
 #if defined(ESP32)
-// Survives deep sleep and software resets (not a power cycle)
-#define PROT_RTC_MAGIC 0x4c694650u
-RTC_DATA_ATTR uint32_t prot_rtc_magic = 0;
-RTC_DATA_ATTR uint8_t prot_rtc_level = 0, prot_rtc_want = 0, prot_rtc_count = 0, prot_rtc_flags = 0;  // flags: 1 user wants load, 2 FET cut by us
-RTC_DATA_ATTR uint32_t prot_rtc_since_s = 0, prot_rtc_sleep_s = 0;
+// Survives deep sleep and software resets (restart, OTA, watchdog, crash), not a power cycle. RTC_DATA_ATTR would
+// be reset to its initial value by the bootloader on every boot that is not a wake-up from deep sleep.
+RTC_NOINIT_ATTR Protection::Persist prot_rtc;   // flags: 1 user wants load, 2 FET cut by us
 #endif
 
-void prot_save_rtc() {
+// @p sleepS: the deep sleep that is about to start (0: awake)
+void prot_save_rtc(uint32_t sleepS = 0) {
 #if defined(ESP32)
-    const Protection::State &s = protection.state();
-    prot_rtc_level = s.level;
-    prot_rtc_want = s.wantLevel;
-    prot_rtc_count = s.wantCount;
-    prot_rtc_since_s = s.sinceCutS;
-    prot_rtc_flags = (user_wants_load ? 1 : 0) | (prot_fet_cut ? 2 : 0);
-    prot_rtc_magic = PROT_RTC_MAGIC;
+    Protection::save(prot_rtc, protection.state(), (user_wants_load ? 1 : 0) | (prot_fet_cut ? 2 : 0), sleepS);
 #endif
 }
 
 void prot_restore_rtc() {
 #if defined(ESP32)
-    esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
-    if (prot_rtc_magic != PROT_RTC_MAGIC || prot_rtc_level > Protection::CRITICAL) {
-        prot_rtc_magic = 0;
-        return;
-    }
-    Protection::State &s = protection.state();
-    s.level = prot_rtc_level;
-    s.wantLevel = prot_rtc_want;
-    s.wantCount = prot_rtc_count;
-    s.sinceCutS = prot_rtc_since_s;
-    user_wants_load = prot_rtc_flags & 1;
-    prot_fet_cut = prot_rtc_flags & 2;
+    uint8_t flags = 0;
+    uint32_t sleepS = 0;
+    if (!Protection::load(prot_rtc, protection.state(), flags, sleepS)) return;   // power-on: nothing saved
+    const Protection::State &s = protection.state();
+    user_wants_load = flags & 1;
+    prot_fet_cut = flags & 2;
     char text[140];
-    if (cause == ESP_SLEEP_WAKEUP_TIMER) {
-        prot_extra_dt_s = prot_rtc_sleep_s;
-        snprintf(text, sizeof(text), "PROTECTION woke from deep sleep after %lu min, level %s",
-            (unsigned long)(prot_rtc_sleep_s / 60), Protection::levelName(s.level));
+    if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER && sleepS) {
+        prot_extra_dt_s = sleepS;
+        snprintf(text, sizeof(text), "woke from deep sleep after %lu min, level %s",
+            (unsigned long)(sleepS / 60), Protection::levelName(s.level));
     }
     else {
-        snprintf(text, sizeof(text), "PROTECTION restored level %s after a restart", Protection::levelName(s.level));
+        snprintf(text, sizeof(text), "restored level %s after a restart (reset reason %d)",
+            Protection::levelName(s.level), (int)esp_reset_reason());
     }
-    prot_rtc_sleep_s = 0;
-    slog(text, LOG_NOTICE);
+    prot_save_rtc();                   // sleepS consumed
+    char line[160];
+    snprintf(line, sizeof(line), "PROTECTION %s", text);
+    slog(line, LOG_NOTICE);
+    snprintf(prot_event_text, sizeof(prot_event_text), "[software] %s", text);
+    prot_event_ms = millis() ? millis() : 1;
 #endif
+}
+
+// BMS data recent enough for the policy
+bool prot_bms_fresh() {
+    return bmsHealth.seen && jbdStatus.cells && millis() - bmsHealth.ok_ms < 120000;
 }
 
 // Lowest cell in mV, 0 if the BMS data is missing or stale
 uint16_t prot_min_cell_mv() {
-    if (!bmsHealth.seen || !jbdStatus.cells || millis() - bmsHealth.ok_ms > 120000) return 0;
+    if (!prot_bms_fresh()) return 0;
     uint8_t n = jbdStatus.cells < 32 ? jbdStatus.cells : 32;
     uint16_t lo = 0;
     for (uint8_t i = 0; i < n; i++) {
@@ -1349,46 +1346,66 @@ uint16_t prot_min_cell_mv() {
 }
 
 // One line per event: who (source) did what (action) and why. source: software, charger, bms, web, mqtt, button
+// BMS values are shown only while they are fresh ("?", null, or left out of the Influx line otherwise).
 void protection_event(const char *source, const char *action, const char *why) {
+    bool fresh = prot_bms_fresh();
     uint16_t cell = prot_min_cell_mv();
     unsigned packV = jbdStatus.voltage;
-    char text[300];
-    snprintf(text, sizeof(text), "PROTECTION [%s] %s: %s (level %s, soc %u %%, lowest cell %u mV, pack %u.%02u V)",
-        source, action, why, Protection::levelName(prot_out.level), jbdStatus.currentCapacity, cell, packV / 100, packV % 100);
+    char bms[64], soc[8], pack[12];
+    if (fresh) {
+        snprintf(bms, sizeof(bms), "soc %u %%, lowest cell %u mV, pack %u.%02u V", jbdStatus.currentCapacity, cell,
+            packV / 100, packV % 100);
+        snprintf(soc, sizeof(soc), "%u", jbdStatus.currentCapacity);
+        snprintf(pack, sizeof(pack), "%u.%02u", packV / 100, packV % 100);
+    }
+    else {
+        snprintf(bms, sizeof(bms), "BMS data stale");
+        snprintf(soc, sizeof(soc), "null");
+        snprintf(pack, sizeof(pack), "null");
+    }
+    char text[360];
+    snprintf(text, sizeof(text), "PROTECTION [%s] %s: %s (level %s, %s)", source, action, why,
+        Protection::levelName(prot_out.level), bms);
     slog(text, LOG_NOTICE);
 
     snprintf(prot_event_text, sizeof(prot_event_text), "[%s] %s: %s", source, action, why);
     prot_event_ms = millis() ? millis() : 1;
 
-    char e_action[96], e_why[200], json[480];
+    char e_action[96], e_why[240], json[500];   // the MQTT buffer is 512 bytes
     TextEscape::json(e_action, sizeof(e_action), action);
     TextEscape::json(e_why, sizeof(e_why), why);
     snprintf(json, sizeof(json),
-        "{\"level\":\"%s\",\"source\":\"%s\",\"action\":\"%s\",\"why\":\"%s\",\"soc\":%u,\"cellMv\":%u,\"packV\":%u.%02u}",
-        Protection::levelName(prot_out.level), source, e_action, e_why, jbdStatus.currentCapacity, cell, packV / 100, packV % 100);
+        "{\"level\":\"%s\",\"source\":\"%s\",\"action\":\"%s\",\"why\":\"%s\",\"soc\":%s,\"cellMv\":%u,\"packV\":%s,\"socOffset\":%u}",
+        Protection::levelName(prot_out.level), source, e_action, e_why, soc, cell, pack, prot_out.socOffset);
     publish_retained(MQTT_TOPIC "/status/Protection", json);
 
-    char line[512], f_action[96], f_why[160];
+    char line[560], f_action[96], f_why[200], f_bms[48] = "";
     snprintf(f_action, sizeof(f_action), "%s", action);
     snprintf(f_why, sizeof(f_why), "%s", why);
     for (char *p = f_action; *p; p++) if (*p == '"' || *p == '\\') *p = '\'';   // Influx string field
     for (char *p = f_why; *p; p++) if (*p == '"' || *p == '\\') *p = '\'';
+    if (fresh) snprintf(f_bms, sizeof(f_bms), ",Soc=%u,CellMin=%u,PackV=%u", jbdStatus.currentCapacity, cell, packV);
     snprintf(line, sizeof(line),
-        "Protection,Source=%s,Version=" VERSION " Host=\"%s\",Action=\"%s\",Why=\"%s\",Level=%u,Soc=%u,CellMin=%u,PackV=%u",
-        source, WiFi.getHostname(), f_action, f_why, (unsigned)prot_out.level, jbdStatus.currentCapacity, cell, packV);
+        "Protection,Source=%s,Version=" VERSION " Host=\"%s\",Action=\"%s\",Why=\"%s\",Level=%u,SocOffset=%u%s",
+        source, WiFi.getHostname(), f_action, f_why, (unsigned)prot_out.level, prot_out.socOffset, f_bms);
     postInflux(line);
 }
 
 // Switch the charger load for a user path (web, MQTT, button) or for the protection. While the battery
 // reserve policy holds the load off, "on" is refused. false: refused or the charger did not answer.
+// A refused "on" is still remembered as the user's wish: the load comes back by itself at the release.
 bool load_command(bool on, const char *source, const char *&text) {
     if (strcmp(source, "software")) user_wants_load = on;        // protection does not change what the user wants
     if (on && prot_out.loadInhibited) {
-        char why[100];
-        snprintf(why, sizeof(why), "battery reserve: soc %u %%, back on at %u %%", jbdStatus.currentCapacity,
+        static char refused[80];
+        snprintf(refused, sizeof(refused), "Load stays off: battery reserve, it comes back on by itself at %u %%",
+            (unsigned)protection.config().loadOnSoc);
+        char why[120];
+        snprintf(why, sizeof(why), "battery reserve: soc %u %%%s, back on by itself at %u %%",
+            prot_bms_fresh() ? jbdStatus.currentCapacity : 0, prot_bms_fresh() ? "" : " (stale)",
             (unsigned)protection.config().loadOnSoc);
         protection_event(source, "load on refused", why);
-        text = "Load stays off: battery reserve";
+        text = refused;
         return false;
     }
     if (!esmart3.setLoad(on)) {
@@ -1674,6 +1691,7 @@ void handle_protection() {
     static uint32_t prev = 0;
     static bool first = true;
     static bool fet_noted = false;
+    static bool load_noted = false;
     uint32_t now = millis();
     if (!first && now - prev < interval) return;
     uint32_t dtS = (first ? 0 : (now - prev) / 1000) + prot_extra_dt_s;
@@ -1682,7 +1700,7 @@ void handle_protection() {
     prev = now;
 
     Protection::Inputs in;
-    in.socValid = bmsHealth.seen && jbdStatus.cells && now - bmsHealth.ok_ms < 120000;
+    in.socValid = prot_bms_fresh();
     in.soc = jbdStatus.currentCapacity;
     in.minCellMv = prot_min_cell_mv();
     in.loadKnown = load_state >= 0;
@@ -1715,9 +1733,15 @@ void handle_protection() {
                 slog("PROTECTION could not switch the load off: the charger does not answer", LOG_ERR);
             }
 #else
-            protection_event("software", "would switch the load off (not enforced)", why);
+            if (!load_noted) {
+                load_noted = true;
+                protection_event("software", "would switch the load off (not enforced)", why);
+            }
 #endif
         }
+    }
+    else {
+        load_noted = false;
     }
     if (o.resumeLoad) prot_resume_pending = true;
     if (prot_resume_pending && !o.loadInhibited) {
@@ -1749,14 +1773,22 @@ void handle_protection() {
         }
     }
 
-    // 2) the cells: discharge FET off at critical levels, charge FET stays on so the sun can recharge
-    if (o.fetOff && !prot_fet_cut) {
+    // 2) the cells: discharge FET off at critical levels, charge FET stays on so the sun can recharge.
+    // Also again when the BMS reports it on although we cut it (the BMS was reset, or our "off" was never sent
+    // because the BMS's own protection had it off at the time and set_mosfets() saw nothing to change).
+    bool discharge_on = in.socValid && (jbdStatus.mosfetStatus & JbdBms::MOSFET_DISCHARGE);
+    if (o.fetOff && (!prot_fet_cut || discharge_on)) {
         static const char why[] = "cell damage near: only the charge FET stays on";
 #if PROT_ENFORCE_FET
-        const char *text;
-        if (set_mosfets(JbdBms::MOSFET_CHARGE, text)) {
-            prot_fet_cut = true;
-            protection_event("software", "discharge FET off", why);
+        static uint32_t last_fet_try = 0;
+        if (!last_fet_try || now - last_fet_try >= 30000) {
+            last_fet_try = now ? now : 1;
+            const char *text;
+            if (set_mosfets(JbdBms::MOSFET_CHARGE, text)) {
+                prot_fet_cut = true;
+                prot_save_rtc();
+                protection_event("software", "discharge FET off", why);
+            }
         }
 #else
         if (!fet_noted) {
@@ -1771,6 +1803,7 @@ void handle_protection() {
             const char *text;
             if (set_mosfets(JbdBms::MOSFET_BOTH, text)) {
                 prot_fet_cut = false;
+                prot_save_rtc();
                 protection_event("software", "discharge FET on", "the cells are out of the critical range");
             }
         }
@@ -1802,8 +1835,7 @@ void handle_protection_sleep() {
     if (now - announced_ms < 15000 || influx.lines() > 0) {
         if (now - announced_ms < 120000) return;           // give the queue time to go out, then sleep anyway
     }
-    prot_rtc_sleep_s = prot_out.sleepS;
-    prot_save_rtc();
+    prot_save_rtc(prot_out.sleepS);
     mqtt.disconnect();
     WiFi.disconnect(true);
     esp_sleep_enable_timer_wakeup((uint64_t)prot_out.sleepS * 1000000ULL);

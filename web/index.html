@@ -354,7 +354,7 @@ function render(d) {
   const pr = d.protection;
   if (pr) {
     const names = { "normal": "normal", "load-cut": "load cut", "sleep": "load cut, sleep schedule", "critical": "critical" };
-    set("prot", names[pr.level] || pr.level);
+    set("prot", (names[pr.level] || pr.level) + (pr.socOffset ? " (BMS counter " + pr.socOffset + " points high)" : ""));
     $("prot").className = pr.level === "normal" ? "" : "neg";
     $("prot").title = "Enforced by this software: load " + (pr.enforce.load ? "yes" : "no") + ", sleep " + (pr.enforce.sleep ? "yes" : "no") + ", discharge FET " + (pr.enforce.fet ? "yes" : "no");
     set("protEvent", pr.lastEvent ? pr.lastEvent.text + " (" + ageText(pr.lastEvent.ageS) + ")" : "");

@@ -230,7 +230,7 @@ def test_bmsparam(base, broker, topic, influx, db, admin_password, read_only):
     check("BmsParam point arrives in InfluxDB", n >= 1, n)
 
 
-def test_reserve(base):
+def test_reserve(base, admin_password=""):
     """Battery reserve policy on the simulator: hold the state of charge, watch the levels (bench timers)."""
     def level():
         return live(base)["protection"]["level"]
@@ -267,6 +267,28 @@ def test_reserve(base):
     check("2 %: level critical", wait_for(lambda: level() == "critical", 80))
     check("critical: discharge FET off", wait_for(lambda: live(base)["bms"]["dischargeFet"] is False, 30))
     check("critical: charge FET stays on", live(base)["bms"]["chargeFet"] is True)
+
+    # A restart (OTA, watchdog, crash) must keep the level and the "FET cut by us" flag (RTC_NOINIT memory):
+    # otherwise the device boots at normal and nobody switches the load or the FET on again.
+    locked = get_json(base, "/api/netstatus")[1]["device"].get("adminLock", False)
+    if locked and not admin_password:
+        print("SKIP restart in critical (device is locked: pass --admin-password)")
+    else:
+        try:
+            http(base, "/reset", {}, auth=("admin:" + admin_password) if locked else None)
+        except OSError:
+            pass                                  # the connection may drop with the restart
+        time.sleep(3)
+        check("restart: device is back", wait_for(lambda: live(base)["uptimeS"] < 60, 60))
+        http(base, "/api/sim?nosleep=1")          # the simulator forgot its settings
+        sim(2)
+        p = live(base)["protection"]
+        check("restart: level critical at once, not found again after a debounce", p["level"] == "critical", p)
+        ev = p["lastEvent"]
+        # the simulated BMS comes back with the discharge FET on, so the re-cut event may already follow the restore
+        check("restart: event says the level was restored (or the FET was cut again)",
+              ev and ("restored level critical" in ev["text"] or "discharge FET off" in ev["text"]), ev)
+        check("restart: discharge FET (still or again) off", wait_for(lambda: live(base)["bms"]["dischargeFet"] is False, 45))
 
     sim(40)
     check("40 %: back to normal", wait_for(lambda: level() == "normal", 150))
@@ -375,7 +397,7 @@ def main():
     test_influx(base, a.influx, a.db)
     test_bmsparam(base, a.mqtt, topic, a.influx, a.db, a.admin_password, a.read_only or a.no_sim)
     if not a.no_sim and not a.read_only:
-        test_reserve(base)
+        test_reserve(base, a.admin_password)
 
     failed = [n for n, ok in RESULTS if not ok]
     print(f"\n{len(RESULTS) - len(failed)}/{len(RESULTS)} checks passed")

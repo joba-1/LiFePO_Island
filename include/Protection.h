@@ -15,6 +15,11 @@
  * Leaving a level needs hysteresis (loadOnSoc for the load, +hysteresisSoc/Mv for sleep and critical).
  * Every change of level needs the same level to be wanted debounce evaluations in a row, so one bad
  * reading never cuts or releases anything.
+ *
+ * Counter offset: when the cell voltage cuts while the BMS counter still says more than the cut level, the
+ * counter reads high (it does not see the idle draw). The difference is remembered and subtracted from the
+ * counter until it reaches fullSoc (a full charge re-syncs it), so the release waits for real charge and the
+ * load does not flap around the knee.
  */
 #pragma once
 
@@ -47,6 +52,7 @@ struct Config {
     uint16_t hysteresisMv = 100;
     uint16_t sagMicroOhm = 1000;    ///< per cell: the cell voltage under discharge is lifted by I x this (empirical, below the p25 of the measured 1.1-1.6 mOhm: errs towards cutting early)
     uint16_t maxSagMv = 100;        ///< cap of that lift
+    uint8_t  fullSoc = 100;         ///< the BMS re-syncs its counter here: the counter offset is cleared
     uint8_t  debounce = 6;          ///< evaluations in a row (6 x 10 s = 1 min)
     uint32_t sleepS = 1800;         ///< length of one sleep in SLEEP
     uint32_t criticalSleepS = 21600;///< ... in CRITICAL
@@ -67,7 +73,53 @@ struct State {
     uint8_t  wantLevel = NORMAL;
     uint8_t  wantCount = 0;
     uint32_t sinceCutS = 0;         ///< seconds since the load was cut (while level >= LOAD_CUT)
+    uint8_t  socOffset = 0;         ///< points the BMS counter reads high (learned at a voltage cut, cleared at fullSoc)
 };
+
+/// State plus what the firmware keeps besides it, as an image for memory that survives software resets and
+/// deep sleep (RTC_NOINIT_ATTR on the ESP32). After a power-on that memory holds garbage: load() checks magic,
+/// ranges and a checksum. Plain data without initializers, so the startup code never touches it.
+struct Persist {
+    uint32_t magic;
+    uint8_t  level, wantLevel, wantCount, socOffset, flags;
+    uint32_t sinceCutS;
+    uint32_t sleepS;                ///< length of the deep sleep just started (0: awake)
+    uint32_t check;
+};
+
+static const uint32_t PERSIST_MAGIC = 0x4c694651u;
+
+inline uint32_t persistCheck(const Persist& p) {
+    uint32_t h = 2166136261u;                                              // FNV-1a over the fields, not the padding
+    auto mix = [&h](uint32_t v, int bytes) {
+        for (int i = 0; i < bytes; i++) { h ^= (v >> (8 * i)) & 0xff; h *= 16777619u; }
+    };
+    mix(p.magic, 4);
+    mix(p.level, 1); mix(p.wantLevel, 1); mix(p.wantCount, 1); mix(p.socOffset, 1); mix(p.flags, 1);
+    mix(p.sinceCutS, 4);
+    mix(p.sleepS, 4);
+    return h;
+}
+
+inline void save(Persist& p, const State& s, uint8_t flags, uint32_t sleepS) {
+    p.magic = PERSIST_MAGIC;
+    p.level = s.level; p.wantLevel = s.wantLevel; p.wantCount = s.wantCount; p.socOffset = s.socOffset;
+    p.flags = flags;
+    p.sinceCutS = s.sinceCutS;
+    p.sleepS = sleepS;
+    p.check = persistCheck(p);
+}
+
+/// false (nothing changed) if @p p does not hold a saved state
+inline bool load(const Persist& p, State& s, uint8_t& flags, uint32_t& sleepS) {
+    if (p.magic != PERSIST_MAGIC || p.check != persistCheck(p)) return false;
+    if (p.level > CRITICAL || p.wantLevel > CRITICAL || p.socOffset > 100) return false;
+    s.level = p.level; s.wantLevel = p.wantLevel; s.wantCount = p.wantCount; s.socOffset = p.socOffset;
+    s.sinceCutS = p.sinceCutS;
+    flags = p.flags;
+    sleepS = p.sleepS;
+    return true;
+}
 
 struct Output {
     Level    level = NORMAL;
@@ -79,7 +131,8 @@ struct Output {
     bool     sleepWanted = false;
     uint32_t sleepS = 0;
     bool     fetOff = false;        ///< level CRITICAL: discharge FET off
-    char     reason[112] = "";      ///< why the level changed (empty if it did not)
+    uint8_t  socOffset = 0;         ///< State::socOffset after this evaluation
+    char     reason[160] = "";      ///< why the level changed (empty if it did not)
 };
 
 class Engine {
@@ -94,6 +147,7 @@ public:
     Output update(const Inputs& in, uint32_t dtS) {
         Output out;
         if (_st.level >= LOAD_CUT) _st.sinceCutS += dtS;
+        if (in.socValid && in.soc >= _cfg.fullSoc) _st.socOffset = 0;   // full: the BMS counter is right again
 
         Level want = wanted(in);
         out.previous = (Level)_st.level;
@@ -110,7 +164,9 @@ public:
                 _st.wantCount = 1;
             }
             if (_st.wantCount >= _cfg.debounce) {
-                describe(out.reason, sizeof(out.reason), in, (Level)_st.level, want);
+                uint8_t offset = want > _st.level ? learnedOffset(in, want) : 0;
+                describe(out.reason, sizeof(out.reason), in, (Level)_st.level, want, offset);
+                if (offset > _st.socOffset) _st.socOffset = offset;
                 if (_st.level == NORMAL) _st.sinceCutS = 0;
                 _st.level = want;
                 _st.wantCount = 0;
@@ -125,6 +181,7 @@ public:
         out.sleepWanted = _st.level >= SLEEP;
         out.sleepS = _st.level == CRITICAL ? _cfg.criticalSleepS : (_st.level == SLEEP ? _cfg.sleepS : 0);
         out.fetOff = _st.level == CRITICAL;
+        out.socOffset = _st.socOffset;
         return out;
     }
 
@@ -132,9 +189,9 @@ private:
     Level wanted(const Inputs& in) const {
         const uint8_t cur = _st.level;
         if (!in.socValid && !in.minCellMv) return (Level)cur;              // no data: hold, never release
-        const uint8_t soc = in.socValid ? in.soc : 100;                    // unknown: the cells decide
+        const uint8_t soc = in.socValid ? correctedSoc(in) : 100;           // unknown: the cells decide
         const uint16_t cell = in.minCellMv ? in.minCellMv : 65535;
-        const uint8_t cutSoc = _cfg.loadOffSoc > _cfg.softMarginSoc ? _cfg.loadOffSoc - _cfg.softMarginSoc : 0;
+        const uint8_t cutSoc = socThreshold(LOAD_CUT);
 
         // The cell voltage is informative on the knee below ~15-20 %. Under discharge the cell sags by I x R
         // (measured 1.1-2.0 mOhm per cell, 40-70 mV at 35 A): look at the voltage it would have at rest.
@@ -163,35 +220,80 @@ private:
         return mv > _cfg.maxSagMv ? _cfg.maxSagMv : mv;
     }
 
-    void describe(char* out, size_t cap, const Inputs& in, Level from, Level to) const {
-        const uint8_t cutSoc = _cfg.loadOffSoc > _cfg.softMarginSoc ? _cfg.loadOffSoc - _cfg.softMarginSoc : 0;
-        char trig[72] = "";
+    /// The BMS counter minus what it is known to read high
+    uint8_t correctedSoc(const Inputs& in) const {
+        return in.soc > _st.socOffset ? in.soc - _st.socOffset : 0;
+    }
+
+    uint8_t socThreshold(Level to) const {
+        if (to == CRITICAL) return _cfg.criticalSoc;
+        if (to == SLEEP) return _cfg.sleepSoc;
+        return _cfg.loadOffSoc > _cfg.softMarginSoc ? _cfg.loadOffSoc - _cfg.softMarginSoc : 0;
+    }
+
+    uint16_t mvThreshold(Level to) const {
+        return to == CRITICAL ? _cfg.criticalCellMv : (to == SLEEP ? _cfg.sleepCellMv : _cfg.loadCutCellMv);
+    }
+
+    /// The cell voltage alone asks for @p to (critical: raw, otherwise lifted by its sag)
+    bool cellTriggers(const Inputs& in, Level to) const {
+        if (!in.minCellMv) return false;
+        return to == CRITICAL ? in.minCellMv < mvThreshold(to) : (uint32_t)in.minCellMv + sagMv(in) < mvThreshold(to);
+    }
+
+    /// Going down to @p to because of the cell voltage while the counter says more: the offset that makes the
+    /// counter agree with the cells (0: nothing learned)
+    uint8_t learnedOffset(const Inputs& in, Level to) const {
+        if (!in.socValid) return 0;
+        uint8_t soc = correctedSoc(in), thr = socThreshold(to);
+        if (soc <= thr || !cellTriggers(in, to)) return 0;
+        uint32_t offset = (uint32_t)_st.socOffset + (soc - thr);
+        return offset > 100 ? 100 : (uint8_t)offset;
+    }
+
+    void describe(char* out, size_t cap, const Inputs& in, Level from, Level to, uint8_t learned) const {
+        char trig[120] = "";
         if (to > from) {                                                    // going down: name the trigger
-            uint8_t soc = in.socValid ? in.soc : 100;
-            uint16_t cell = in.minCellMv ? in.minCellMv : 65535;
-            uint8_t socThr = to == CRITICAL ? _cfg.criticalSoc : (to == SLEEP ? _cfg.sleepSoc : cutSoc);
-            uint16_t mvThr = to == CRITICAL ? _cfg.criticalCellMv : (to == SLEEP ? _cfg.sleepCellMv : _cfg.loadCutCellMv);
-            if (in.socValid && soc <= socThr) {
-                snprintf(trig, sizeof(trig), "soc %u %% <= %u %%", soc, socThr);
-            }
-            else if (to == CRITICAL ? cell < mvThr : (uint32_t)cell + sagMv(in) < mvThr) {
-                uint32_t sag = to == CRITICAL ? 0 : sagMv(in);
-                if (sag) {
-                    snprintf(trig, sizeof(trig), "lowest cell %u mV + %u mV sag at %u.%u A < %u mV", cell, (unsigned)sag,
-                        (unsigned)(-in.centiA / 100), (unsigned)((-in.centiA % 100) / 10), mvThr);
+            uint8_t socThr = socThreshold(to);
+            uint16_t mvThr = mvThreshold(to);
+            if (in.socValid && correctedSoc(in) <= socThr) {
+                if (_st.socOffset) {
+                    snprintf(trig, sizeof(trig), "soc %u %% (counter %u %% - %u) <= %u %%", correctedSoc(in), in.soc,
+                        _st.socOffset, socThr);
                 }
                 else {
-                    snprintf(trig, sizeof(trig), "lowest cell %u mV < %u mV", cell, mvThr);
+                    snprintf(trig, sizeof(trig), "soc %u %% <= %u %%", in.soc, socThr);
+                }
+            }
+            else if (cellTriggers(in, to)) {
+                uint32_t sag = to == CRITICAL ? 0 : sagMv(in);
+                int n;
+                if (sag) {
+                    n = snprintf(trig, sizeof(trig), "lowest cell %u mV + %u mV sag at %u.%u A < %u mV", in.minCellMv,
+                        (unsigned)sag, (unsigned)(-in.centiA / 100), (unsigned)((-in.centiA % 100) / 10), mvThr);
+                }
+                else {
+                    n = snprintf(trig, sizeof(trig), "lowest cell %u mV < %u mV", in.minCellMv, mvThr);
+                }
+                if (learned > _st.socOffset && n > 0 && (size_t)n < sizeof(trig)) {
+                    snprintf(trig + n, sizeof(trig) - n, "; counter %u %% reads %u points high until full", in.soc, learned);
                 }
             }
             else if (to == SLEEP || from >= SLEEP) {
                 snprintf(trig, sizeof(trig), "load cut for %lu s", (unsigned long)_st.sinceCutS);
             }
         }
-        else {                                                              // going up
-            snprintf(trig, sizeof(trig), "soc %u %% >= %u %%, lowest cell %u mV", in.socValid ? in.soc : 0,
-                to == NORMAL ? _cfg.loadOnSoc : (to == LOAD_CUT ? (uint8_t)(_cfg.sleepSoc + _cfg.hysteresisSoc) : (uint8_t)(_cfg.criticalSoc + _cfg.hysteresisSoc)),
-                in.minCellMv);
+        else {                                                              // going up: the release that was passed
+            uint8_t socThr = to == NORMAL ? _cfg.loadOnSoc
+                : (to == LOAD_CUT ? (uint8_t)(_cfg.sleepSoc + _cfg.hysteresisSoc) : (uint8_t)(_cfg.criticalSoc + _cfg.hysteresisSoc));
+            if (_st.socOffset) {
+                snprintf(trig, sizeof(trig), "soc %u %% (counter %u %% - %u) >= %u %%, lowest cell %u mV",
+                    in.socValid ? correctedSoc(in) : 0, in.soc, _st.socOffset, socThr, in.minCellMv);
+            }
+            else {
+                snprintf(trig, sizeof(trig), "soc %u %% >= %u %%, lowest cell %u mV", in.socValid ? in.soc : 0, socThr,
+                    in.minCellMv);
+            }
         }
         snprintf(out, cap, "%s -> %s: %s", levelName(from), levelName(to), trig);
     }

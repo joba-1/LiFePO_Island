@@ -60,9 +60,10 @@ struct Bms {
 struct Reserve {
     uint8_t  level = 0;             ///< Protection::Level
     bool     loadInhibited = false;
+    uint8_t  socOffset = 0;         ///< points the BMS counter is known to read high
     bool     enforceLoad = false, enforceSleep = false, enforceFet = false;
     int32_t  eventAgeS = -1;        ///< -1: no event since boot
-    char     event[160] = "";
+    char     event[200] = "";
 };
 
 struct Link {
@@ -201,6 +202,7 @@ inline bool write(char* out, size_t cap, const Live& d) {
     w.open('{');
     w.key("level");         w.string(Protection::levelName(d.reserve.level));
     w.key("loadInhibited"); w.boolean(d.reserve.loadInhibited);
+    w.key("socOffset");     w.integer(d.reserve.socOffset);
     w.key("enforce");
     w.open('{');
     w.key("load");  w.boolean(d.reserve.enforceLoad);

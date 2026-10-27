@@ -22,7 +22,10 @@ Charger and BMS act first. This software follows with a margin, and it alone dec
 
 Leaving: `load-cut` needs **SoC >= 30 % and lowest cell (lifted by its sag) >= 3.20 V**; `sleep` needs SoC >= 15 % and cell >= 3.25 V;
 `critical` needs SoC >= 8 % and cell >= 3.05 V. Without a known SoC (BMS data stale) a level is **held**, never released.
-When the cut ends the load is switched on again only if the user last wanted it on.
+"SoC" is the BMS counter minus its known offset (see "The BMS counter").
+When the cut ends the load is switched on again only if the user last wanted it on. A "load on" that was refused
+during the cut counts as wanting it on: the answer says so ("it comes back on by itself at 30 %"), and switching
+it off again cancels that.
 
 The charger's own cut (its `BatUvp`, see below) and the BMS's discharge cutoff are expected to act at about 15 %.
 They are not relied upon: a load that is on while the level is `load-cut` is switched off, with the log line
@@ -72,22 +75,32 @@ In normal cycling the counter re-syncs when the pack is full: it reached "100 %"
 charger's and the ESP's current (about 1 W, 0.7 % of the capacity per day), so the counter reads too high by roughly
 **10 points after 14 days and 20 after a month**.
 
-Planned (not implemented): (1) subtract the unmetered idle draw (about 1 W, 0.03 points per hour) from the counter
-for as long as no full charge has happened, which keeps it within the +/- 5 points after about two weeks and is safe
-when it is a little too large (cut earlier, resume later); (2) when the knee is reached while the counter still
-says > 15 %, remember the offset until the next full charge. An energy ledger from the charger's counters was
-considered for the release and dropped: with the +/- 5 points tolerance it is not needed. Without the correction a
-long dark period can make the counter 10-20 points too high; the cell voltage witness then cuts at the knee anyway
-and the load may flap around the knee until the pack is charged properly.
+**Counter offset (implemented):** when the cell voltage triggers a level while the counter still says more than
+that level's SoC (for example the cut at the knee while the counter says 40 %), the difference (40 - 13 = 27
+points) is remembered and subtracted from the counter until it reads 100 % again (a full charge re-syncs it). So
+the release waits for real charge (counter 57 % = 30 %) and the load does not flap around the knee in the morning
+sun; the next cut comes earlier as well. A cut by the counter itself learns nothing. The offset only grows until it
+is cleared, is kept across deep sleep and restarts, shows in the events (`counter 40 % reads 27 points high until
+full`, `soc 30 % (counter 57 % - 27) >= 30 %`), in `/api/live` `protection.socOffset`, MQTT and InfluxDB
+`SocOffset`. A cut caused by a cold or weak cell rather than drift also learns an offset: that errs towards
+keeping the load off longer, until the next full charge.
+
+Planned (not implemented): subtract the unmetered idle draw (about 1 W, 0.03 points per hour) from the counter for
+as long as no full charge has happened, which keeps it within the +/- 5 points after about two weeks and is safe
+when it is a little too large (cut earlier, resume later). An energy ledger from the charger's counters was
+considered for the release and dropped: with the +/- 5 points tolerance it is not needed.
 
 ## Observability: who did what and why
 
 Every action is one event, in four places:
 
 * syslog (NOTICE): `PROTECTION [software] load off: <why> (level load-cut, soc 13 %, lowest cell 3190 mV, pack 12.81 V)`
-* MQTT `LiFePO_Island/<n>/status/Protection` (retained JSON: level, source, action, why, soc, cellMv, packV)
-* InfluxDB measurement `Protection` (tag `Source`, fields `Action`, `Why`, `Level`, `Soc`, `CellMin`, `PackV`)
-* `GET /api/live` `protection` (`level`, `loadInhibited`, `enforce`, `lastEvent`) and the page (Protection card)
+* MQTT `LiFePO_Island/<n>/status/Protection` (retained JSON: level, source, action, why, soc, cellMv, packV, socOffset)
+* InfluxDB measurement `Protection` (tag `Source`, fields `Action`, `Why`, `Level`, `SocOffset`, `Soc`, `CellMin`, `PackV`)
+* `GET /api/live` `protection` (`level`, `loadInhibited`, `socOffset`, `enforce`, `lastEvent`) and the page (Protection card)
+
+When the BMS data is stale the BMS values are not reported as if they were current: syslog says `BMS data stale`,
+MQTT has `null` for soc and packV, and the Influx point has no `Soc`, `CellMin` and `PackV`.
 
 Sources: `software` (this policy), `charger` (a load change this device did not command: its own protection, a
 schedule or the switch on the charger; the line says if the charger reports battery low voltage), `web`, `mqtt`,
@@ -101,9 +114,20 @@ schedule or the switch on the charger; the line says if the charger reports batt
 | `PROT_ENFORCE_SLEEP` | 1 | 1 | deep sleep schedule |
 | `PROT_ENFORCE_FET` | **0** | 1 | discharge FET off at critical: not before the wiring is verified (the FET may also cut the charger and the ESP) |
 
-With a flag off the event is logged as `would ...`. The bench uses short timers (`[bench_reserve]` in
-`platformio.ini`) so every level runs in minutes. State (level, debounce, time since the cut, user intent) is kept in
-RTC memory across deep sleep and restarts; a power cycle starts at `normal` and finds the level again within a minute.
+With a flag off the event is logged as `would ...`, once per episode. The bench uses short timers (`[bench_reserve]`
+in `platformio.ini`) so every level runs in minutes.
+
+State (level, debounce, time since the cut, counter offset, user intent, "discharge FET cut by us") is kept in
+`RTC_NOINIT_ATTR` memory (`Protection::Persist`, with magic and checksum): it survives deep sleep **and software
+resets** (restart, OTA, watchdog, crash), so a restart in `load-cut` still switches the load on again at the release,
+and a restart in `critical` still switches the discharge FET on again. (`RTC_DATA_ATTR` would not do: the bootloader
+re-initializes it on every boot that is not a deep sleep wake-up.) The page shows `restored level ... after a
+restart`. A power cycle loses it: the device starts at `normal` and finds a low level again within a minute, but a
+load cut by this software before the power cycle is not switched on again (depends on what the charger does at
+power-up: not yet known).
+
+At `critical` the discharge FET command is repeated (every 30 s) while the BMS reports the discharge FET on: after a
+BMS reset, or when the BMS's own protection had it off at the time of the first command, so that no command was sent.
 
 ## Deep sleep
 
@@ -123,9 +147,14 @@ back at the release (seen on the bench).
   that hangs directly behind the BMS and is cut only by the BMS**. Read the real values with *Read from BMS* and
   raise cell UVP to about 2.9-3.0 V (release about 3.1 V) with the BMS app. Check the BMS rating (35 A = about
   450 W at 12.8 V) against the inverter.
+* **Inverter:** this software switches only the charger's load output. An inverter behind the BMS is cut only by
+  the BMS, or by this software's discharge FET action at `critical`, which is **off on the island**
+  (`PROT_ENFORCE_FET=0`). Until the wiring is verified and the BMS cell UVP is raised, nothing in 5.0 keeps the
+  inverter from draining the pack to the BMS's 2.5 V.
 * **Always-on consumers:** charger and ESP seem to be wired past the BMS discharge FET. They must stay powered so the
-  sun can restart the charger; the damaging range is avoided by the levels above (long sleep at critical), not by
-  the BMS.
+  sun can restart the charger. The long sleep at `critical` only saves the ESP's share; the charger's own draw goes
+  on, so in a long enough dark period the cells still reach the damaging range (December 2024: 1.2-1.4 V). Only
+  hardware can prevent that (open point 3).
 
 ## Open points
 
