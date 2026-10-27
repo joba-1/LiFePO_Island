@@ -90,7 +90,7 @@ Manual checks (browser, phone width and desktop, light and dark mode):
 
    ```bash
    python3 test/system/check_device.py --host nat2:8080 --instance 1 \
-       --db LiFePO_Island --no-sim --read-only
+       --db LiFePO_Island --ha-prefix homeassistant --no-sim --read-only
    ```
 
 4. Grafana dashboard `LiFePO_Island` shows continuous data; syslog shows
@@ -121,6 +121,6 @@ has power. So:
 
 | Date | Version | Unit | Bench | Island | Notes |
 |---|---|---|---|---|---|
-| 2026-10-27 | 5.0.0 | 86/86 | 97/97 (`check_device.py`, MH-ET `mhetesp32minikit_bench`, reserve ladder down to critical, restart in critical) | see below | protection state survives restarts (RTC_NOINIT), counter offset, discharge FET re-check |
+| 2026-10-27 | 5.0.0 | 86/86 | 97/97 (`check_device.py`, MH-ET `mhetesp32minikit_bench`, reserve ladder down to critical, restart in critical) | 49/49 read-only, OTA via nat2:8080 | protection state survives restarts (RTC_NOINIT), counter offset, discharge FET re-check |
 | 2026-10-23 | 4.6.0 | 56/56 | 77/77 (`check_device.py`, MH-ET `mhetesp32minikit_bench`, includes BMS settings read, MQTT, InfluxDB) | not deployed | BmsParam; JBD library 2.2 (host tests with a fake BMS) |
 | 2026-10-13 | 4.2.0 | 44/44 | 63/63 (`check_device.py`, Atom Echo) | 47/47 read-only, OTA via nat2:8080 | HA migration done: 12 entities adopted, 134,813 recorder states rescaled |
