@@ -23,8 +23,24 @@ Each tile shows how old its data is ("live", "45 s old", "no data").
 | Load | power drawn by the load output (the inverter), with a bar up to the output's limit ("max … W" = the charger's 30 A at the current battery voltage); "off" under the bar when the output is off; **Load ON / OFF** |
 | Cells | voltage of every cell with a bar (2.8–3.6 V). Bar colour = deviation from the average: blue below, white at average, orange/red above. While balancing (normal when full): **▼ drain** = the BMS bleeds this fuller cell through a resistor (it then reads a few mV lower), **▲ low** = below average, keeps its charge while the others come down. Hover a cell for its deviation in mV. Min/avg/max, spread |
 | Temperatures | the two BMS thermistor probes, "Charger: battery" (the charger's battery temperature input) and "Charger: internal" (heatsink) |
-| Protection | the BMS MOSFETs (switching the discharge MOSFET off asks first: it cuts the load from the battery) and the active faults as text |
+| Protection | the BMS MOSFETs (switching the discharge MOSFET off asks first: it cuts the load from the battery), the active faults as text, the reserve policy level, the idle switch-off (settings, and while the load is on: minutes so far and their mean power) and the last event (who switched what and why) |
 | Link | Wi-Fi signal, IP, InfluxDB result and queue, MQTT, time, uptime |
+
+## When the load switches itself off
+
+The load output (the inverter) goes off by itself in two cases. The last event under the Protection tile says
+which one.
+
+* **Nothing uses it** (`[idle] load off: nothing in use ...`): the mean load power stayed below 15 W for 30 minutes.
+  The inverter alone draws about 6-11 W; in winter that is more than the panel yields, so an inverter left on
+  empties the battery. A charger (e-bike, scooter, tool battery) keeps it on; the load goes off about 30 minutes
+  after it has finished. So the inverter's own switch can stay on: switch the load on (page, button, Home
+  Assistant, MQTT) when you need it, and forget it. It does not come back on by itself.
+* **Battery low** (`[software] load off ...`, level `load cut`): below 13 % (or a cell below 3.19 V). Switching it
+  on is refused until the battery is back at 30 %; then it comes back by itself if you had wanted it on.
+
+Change the idle settings (admin login), for example in summer: `curl -u admin -X POST
+http://nat2:8080/api/idleoff -d thresholdW=15 -d minutes=30`; `minutes=0` switches the idle switch-off off.
 
 ## Details and administration
 
