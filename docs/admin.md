@@ -4,7 +4,7 @@
 
 | What | Where |
 |---|---|
-| Device | ESP32 `lifepo_island-1`, 192.168.5.222 in the island network |
+| Device | ESP32-CAM `lifepo_island-1` (MAC `4C:EB:D6:77:F7:60`), in the island network behind nat2; built with env `mhetesp32minikit_ota` (the MH-ET MiniKit is the test board) |
 | Access | only through the range extender `nat2` (192.168.1.239): `http://nat2:8080/` |
 | nat2 | since 2026-10-23 a Seeed XIAO ESP32-C6 (MAC `58:E6:C5:19:38:60`, external antenna) running a custom Tasmota 16 build; powered via the AMS1117 of a repurposed fan-controller board on 12 V (see below). Sources and settings: `~/project/range-extender/` |
 | Data | InfluxDB `influx:8086`, database `LiFePO_Island`; MQTT `mqtt`, `LiFePO_Island/1/#`; syslog `syslog`, host `lifepo_island-1`, app `Joba1` |
@@ -32,8 +32,10 @@ protection and answers 401 without it, even with a correct login.
 before). An upload that is cut off can leave the web server hanging until the
 next reset.
 
-The island was built with `mhetesp32minikit_ota` for 4.1 (`default_envs` in
-`platformio.ini` still names `esp32cam_ota`; pass `-e` explicitly). The OTA
+The island is an **ESP32-CAM** but has been built with `mhetesp32minikit_ota` since 4.1 (`default_envs` in
+`platformio.ini` still names `esp32cam_ota`; pass `-e` explicitly). That works because the RS485 pins (14/13) and
+the load LED (GPIO 33, the ESP32-CAM's red LED) are not board specific; only the health LED lands on GPIO 2,
+where nothing is attached. Wiring and photos: `docs/wiring-test-plan.md`. The OTA
 upload goes to `[ota] host` (`nat2:8080`); 4.1 and older used the host name,
 which never resolved from the house network.
 

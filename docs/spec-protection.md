@@ -143,6 +143,10 @@ The switch-off counts as the user's wish "off" (source `idle`): the reserve rele
 again. Switching it on (page, MQTT, Home Assistant, button) starts a new window. The event is
 `[idle] load off: nothing in use: mean 6.3 W, below 15 W for 30 min`, in the same four places as the others.
 
+It covers only what hangs on the charger's load output: the old 600 W inverter. The new, larger inverter is tapped
+from the pack before the DC switch (docs/wiring-test-plan.md) and is switched by hand only; the BMS discharge FET
+might cut it, if its negative is behind the BMS (open).
+
 Settings: build flags `IDLE_OFF_W`, `IDLE_OFF_MIN`, `IDLE_OFF_SETTLE_S` are the defaults; `POST /api/idleoff`
 (admin) stores `thresholdW` (1-500) and `minutes` (0 = never, up to 1440) in NVS (namespace `idleoff`).
 

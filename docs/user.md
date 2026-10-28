@@ -28,7 +28,11 @@ Each tile shows how old its data is ("live", "45 s old", "no data").
 
 ## When the load switches itself off
 
-The load output (the inverter) goes off by itself in two cases. The last event under the Protection tile says
+Only the **old 600 W inverter** hangs on the charger's load output. The new, larger inverter is wired to the pack
+before the DC switch: nothing here switches it off, so switch it off by hand after use (its idle draw empties the
+battery in winter just the same).
+
+The load output (the old inverter) goes off by itself in two cases. The last event under the Protection tile says
 which one.
 
 * **Nothing uses it** (`[idle] load off: nothing in use ...`): the mean load power stayed below 15 W for 30 minutes.

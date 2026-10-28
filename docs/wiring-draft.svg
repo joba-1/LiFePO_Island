@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 690" font-family="sans-serif" font-size="12">
+  <style>
+    .box { fill: #f4f4f4; stroke: #333; stroke-width: 1.5; }
+    .pos { stroke: #c00; stroke-width: 3; fill: none; }
+    .neg { stroke: #226; stroke-width: 3; fill: none; }
+    .sig { stroke: #080; stroke-width: 2; fill: none; }
+    .unk { stroke-dasharray: 7 5; }
+    .t { fill: #111; }
+    .q { fill: #b60; font-weight: bold; }
+  </style>
+  <text x="10" y="20" class="t" font-size="15" font-weight="bold">LiFePO Island: wiring from the photos of 2026-10-24 and the owner's corrections of 2026-10-28 (DRAFT)</text>
+  <text x="10" y="38" class="t">solid = seen on a photo or confirmed on site, dashed = hypothesis (to be measured), red = positive, blue = negative, green = signal</text>
+
+  <!-- PV -->
+  <rect class="box" x="20" y="60" width="130" height="50"/><text x="85" y="82" text-anchor="middle" class="t">PV panel 410 Wp</text><text x="85" y="98" text-anchor="middle" class="t">(JA Solar JAM54S30)</text>
+  <path class="pos" d="M150 75 H560"/><path class="neg" d="M150 95 H560"/>
+  <text x="300" y="68" class="t">black solar cable, "PV" tube</text>
+
+  <!-- charger -->
+  <rect class="box" x="560" y="55" width="200" height="180"/>
+  <text x="660" y="125" text-anchor="middle" class="t" font-weight="bold">MPPT charger (red)</text>
+  <text x="660" y="141" text-anchor="middle" class="t">ESF48H6030 (eSmart4), 12 V</text>
+  <text x="570" y="88" class="t">PV+ / PV-</text>
+  <text x="570" y="184" class="t">BAT+ / BAT-</text>
+  <text x="570" y="225" class="t">RS485</text>
+  <text x="672" y="225" class="t">LOAD+ / LOAD-</text>
+
+  <!-- MC4 Y-splitters and the DC switch -->
+  <rect class="box" x="170" y="150" width="140" height="55"/>
+  <text x="240" y="170" text-anchor="middle" class="t">"Photovoltaic DC switch"</text><text x="240" y="185" text-anchor="middle" class="t">used as battery switch</text><text x="240" y="199" text-anchor="middle" class="t">(SoC sticker on it)</text>
+  <rect class="box" x="170" y="235" width="140" height="50"/>
+  <text x="240" y="256" text-anchor="middle" class="t">MC4 Y-splitters</text><text x="240" y="272" text-anchor="middle" class="t">above the switch</text>
+  <path class="pos" d="M215 235 V205"/><path class="neg" d="M265 235 V205"/>
+  <path class="pos" d="M310 165 H560 V175"/><path class="neg" d="M310 190 H560"/>
+  <text x="330" y="158" class="t">brown / blue, "BAT" tube</text>
+
+  <!-- battery -->
+  <rect class="box" x="20" y="480" width="330" height="150"/>
+  <text x="185" y="500" text-anchor="middle" class="t" font-weight="bold">Pack: 4 x 272 Ah (series), cardboard box</text>
+  <rect class="box" x="40" y="515" width="60" height="40"/><text x="70" y="540" text-anchor="middle" class="t">cell 1</text>
+  <rect class="box" x="110" y="515" width="60" height="40"/><text x="140" y="540" text-anchor="middle" class="t">cell 2</text>
+  <rect class="box" x="180" y="515" width="60" height="40"/><text x="210" y="540" text-anchor="middle" class="t">cell 3</text>
+  <rect class="box" x="250" y="515" width="60" height="40"/><text x="280" y="540" text-anchor="middle" class="t">cell 4</text>
+  <rect class="box" x="200" y="580" width="140" height="40"/><text x="270" y="598" text-anchor="middle" class="t">JBD BMS 35 A</text><text x="270" y="613" text-anchor="middle" class="t">B-  P-  RS485 UART NTC</text>
+  <path class="neg" d="M280 555 V580"/>
+  <text x="285" y="572" class="t">B- (blue)</text>
+
+  <!-- pack to the splitters -->
+  <path class="pos" d="M40 535 H28 V255 H170"/>
+  <text x="34" y="330" class="t">brown, cell 1:</text>
+  <text x="34" y="345" class="t">pack + (no fuse seen)</text>
+  <path class="neg unk" d="M340 600 H362 V300 H265 V285"/>
+  <text x="250" y="330" class="t">blue, P- (assumed)</text>
+
+  <!-- new inverter: tapped before the switch -->
+  <path class="pos" d="M190 285 V450 H900 V490"/><path class="neg" d="M205 285 V440 H880 V490"/>
+  <text x="400" y="468" class="t">red / black 6 mm² solar cable, tapped before the switch: not switched by the charger</text>
+  <rect class="box" x="780" y="490" width="200" height="60"/>
+  <text x="880" y="512" text-anchor="middle" class="t" font-weight="bold">new, larger inverter</text>
+  <text x="880" y="528" text-anchor="middle" class="t">not controlled by this software;</text>
+  <text x="880" y="542" text-anchor="middle" class="t">off at night 27/28 Oct (BMS 0.00 A)</text>
+
+  <!-- old inverter on LOAD -->
+  <path class="pos" d="M730 235 V300"/><path class="neg" d="M745 235 V300"/>
+  <text x="752" y="270" class="t">blue / brown</text>
+  <rect class="box" x="670" y="300" width="170" height="60"/>
+  <text x="755" y="321" text-anchor="middle" class="t" font-weight="bold">old inverter 600 W</text>
+  <text x="755" y="337" text-anchor="middle" class="t">(label 800 W, 1600 W peak)</text>
+  <text x="755" y="351" text-anchor="middle" class="t">the switchable load</text>
+
+  <!-- ESP box -->
+  <rect class="box" x="385" y="285" width="265" height="135"/>
+  <text x="517" y="303" text-anchor="middle" class="t" font-weight="bold">ESP box (below the old inverter)</text>
+  <text x="393" y="321" class="t">ESP32-CAM on perfboard</text>
+  <text x="393" y="336" class="t">(built with env mhetesp32minikit_ota)</text>
+  <text x="393" y="351" class="t">RS485 module (red LED), screw terminal</text>
+  <text x="393" y="366" class="t">module with USB-C (5 V supply?)</text>
+  <text x="393" y="388" class="q">supply: ? not LOAD: it kept running</text>
+  <text x="393" y="403" class="q">after the load went off (27 Oct 15:30)</text>
+  <path class="sig" d="M590 235 V285"/>
+  <text x="596" y="262" class="t">thin cable,</text>
+  <text x="596" y="276" class="t">4-pin plug</text>
+  <path class="sig unk" d="M340 590 C420 570 470 500 500 420"/>
+  <text x="400" y="655" class="t">BMS RS485/UART to the ESP?</text>
+
+  <!-- findings -->
+  <text x="20" y="680" class="q">Open: BMS P-/B- terminals, where the blue negative ends, fuses, ESP supply and GND, which tube carries which leg.</text>
+</svg>
