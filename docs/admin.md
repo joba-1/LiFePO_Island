@@ -6,7 +6,7 @@
 |---|---|
 | Device | ESP32-CAM `lifepo_island-1` (MAC `4C:EB:D6:77:F7:60`), in the island network behind nat2; built with env `mhetesp32minikit_ota` (the MH-ET MiniKit is the test board) |
 | Access | only through the range extender `nat2` (192.168.1.239): `http://nat2:8080/` |
-| nat2 | since 2026-10-23 a Seeed XIAO ESP32-C6 (MAC `58:E6:C5:19:38:60`, external antenna) running a custom Tasmota 16 build; powered via the AMS1117 of a repurposed fan-controller board on 12 V (see below). Sources and settings: `~/project/range-extender/` |
+| nat2 | since 2026-11-02 a Seeed XIAO ESP32-C3 (MAC `84:FC:E6:00:A5:EC`, external antenna, USB power) running a custom Tasmota 16 build; no serial access at its position (see below). Sources and settings: `~/git/range-extender/` |
 | Data | InfluxDB `influx:8086`, database `LiFePO_Island`; MQTT `mqtt`, `LiFePO_Island/1/#`; syslog `syslog`, host `lifepo_island-1`, app `Joba1` |
 | Dashboard | Grafana `LiFePO_Island` (uid `mYiP89N4z`) |
 | Test bench | MH-ET MiniKit (env `mhetesp32minikit_bench`, instance 8) or XIAO ESP32-C6 (`xiao_esp32c6_bench`, instance 7) on job6 USB; the Atom Echos (`atom_echo`, 9) are used for speech tests |
@@ -53,8 +53,8 @@ curl -u admin:$PW -X POST http://nat2:8080/api/netconfig -d influxHost=influx
 ### No data in Grafana
 
 1. `ping nat2` / `curl http://nat2:8080/api/live`.
-   * nat2 does not answer: **check its power first** (a hung C6 only recovers
-     when its 12 V is unplugged and replugged).
+   * nat2 does not answer: **check its power first** (a hung board only recovers
+     when its power is cycled).
      On 2026-10-10 job4 was shut down and the island was dark for days. Then
      check that nat2 is associated with ax3 (`job.fritz.ssid`, 2.4 GHz).
    * nat2 answers on port 80 but 8080 does not: the island is down or has
@@ -68,14 +68,24 @@ curl -u admin:$PW -X POST http://nat2:8080/api/netconfig -d influxHost=influx
    are dropped (`dropped`).
 4. Syslog: `{host="lifepo_island-1"}` in Loki (Grafana Explore).
 
-### nat2 (XIAO ESP32-C6, since 2026-10-23)
+### nat2 (XIAO ESP32-C3, since 2026-11-02)
 
-The old nat2 (ESP32-D0, Tasmota 13.2.0.2, MAC `34:86:5D:3A:53:24`) is retired.
-The C6 runs `tasmota32c6-rangeextender` (Tasmota `e1325dd`, NAPT + port map
-compiled in; the official builds have no `Rgx*` commands). Files and the full
-settings list: `~/project/range-extender/firmware/` and
-`config/nat2-settings.txt`. The ax3 DHCP reservation `nat2` -> 192.168.1.239 now
-belongs to the new MAC (backup `/root/dhcp.bak-nat2-c6` on ax3).
+Earlier boards: the ESP32-D0 (Tasmota 13.2.0.2, MAC `34:86:5D:3A:53:24`) is
+retired; the XIAO ESP32-C6 (MAC `58:E6:C5:19:38:60`, 2026-10-23 to 2026-11-02) is
+unplugged and meant to return as a fan controller.
+
+The C3 runs `tasmota32c3-rangeextender` (Tasmota `e1325dd`, NAPT + port map
+compiled in; the official builds have no `Rgx*` commands). It has no serial
+access at its position, so everything goes over the network.
+
+* Repository: `~/git/range-extender` (build config, `config/nat2-settings.txt`,
+  `nat2-fw.sh`). The AP key is in `config/nat2-secrets.txt`, outside git.
+* Source: `~/git/Tasmota`, branch `nat2`, follows `arendst/development`.
+* Update: `nat2-fw.sh update` pulls, builds, publishes and uploads directly.
+  `nat2-fw.sh ota` makes the board fetch the published image from its `OtaUrl`,
+  `https://banzhaf.chickenkiller.com/tasmota/tasmota32c3-rangeextender.bin`.
+* The ax3 DHCP reservation `nat2` -> 192.168.1.239 belongs to the C3 (backups
+  `/root/dhcp.bak-nat2-c3` and `/root/dhcp.leases.bak-nat2-c3` on ax3).
 
 Traps:
 
@@ -93,17 +103,29 @@ Rule2: on System#Boot do CpuFrequency 80 endon
   when the command runs (MQTT `stat/nat2/RESULT` shows the target). A client
   with a static IP, or one that connects later, maps to `0.0.0.0`. Hence the
   5-minute rule.
-* Power: the board's AMS1117-5.0 drops 12 V to 5 V and gets hot. Above 20 dBm
-  `WifiPower` the chip hangs until the 12 V is unplugged. Use `WifiPower 18.5`
-  (steps 17 / 18.5 / 19 / 19.5) until it runs from a 5 V USB supply.
+* Power, measured on the C6 on a fan board: its AMS1117-5.0 drops 12 V to 5 V and
+  gets hot. Above 20 dBm `WifiPower` the chip hangs until the 12 V is unplugged.
+  Use `WifiPower 18.5` (steps 17 / 18.5 / 19 / 19.5) from such a supply. The C3 runs
+  from a USB plug without that regulator, at `WifiPower 20`, the allowed limit. The
+  firmware accepts 20.5, so do not set it by "maximum".
   `WifiPower 30` was stored as 4.4 dBm.
 * `/cm` web commands need `SetOption128 1` in v16.
-* External antenna: `/autoexec.be` sets GPIO3 low and GPIO14 high.
+* Antenna: on the C6, `/autoexec.be` selects the external antenna with GPIO3 low
+  and GPIO14 high. Never load that file on the C3, where GPIO14 belongs to the
+  embedded flash: its `/autoexec.be` is `config/autoexec-c3.be`.
+* A Tasmota settings dump cannot move between chip types: set a new board from
+  `config/nat2-settings.txt`.
+* All boards that were nat2 keep the MQTT topic `nat2`. A second one online shares
+  `tele/nat2/LWT`, and its last will marks the running board offline in HA.
 
 Link logging: `/rgxlog.be` writes once a minute to InfluxDB `LiFePO_Island`,
 measurement `Nat2Link` (`host=nat2`): `island_rssi` (nat2 hears the island),
 `up_rssi`, `up_bssid` (nat2 hears ax3), `clients`, `heap`. The island's own
 reading of nat2 is `Wifi.RSSI`. Live view: `config/rssi.sh`.
+
+Levels at the swap, C6 over its last 24 h against the C3's first 20 minutes: island
+hears nat2 -84.2 / -85.2 dBm, nat2 hears the island -80.3 / -79.2 dBm, nat2 hears
+ax3 -66.0 / -64.1 dBm.
 
 Check: `curl 'http://nat2/cm?cmnd=RgxClients'` (the island `4CEBD677F760`
 needs an IP there) and `mosquitto_sub -h mqtt -t stat/nat2/RESULT` while
